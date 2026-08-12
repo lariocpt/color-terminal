@@ -1,0 +1,222 @@
+#!/usr/bin/env bash
+# color-terminal — randomize the terminal color theme AND the splash animation
+# palette together, so each new window's splash matches the terminal it draws in.
+#
+# Backends (v1):
+#   terminal: ghostty     — random built-in theme applied live via OSC sequences on
+#                           /dev/tty (vendored from color-ghostty, so it works
+#                           unchanged over ssh), persisted to ~/.config/ghostty/config
+#                           so freshly opened local windows start on the same theme.
+#   splash:   splashboard — the matching splashboard theme preset written to a
+#                           managed block in ~/.splashboard/settings.toml. Themes
+#                           with no matching preset fall back to "reset" tokens, so
+#                           the splash inherits whatever colors were just applied.
+#
+# The flow is pick → apply terminal → sync splash, each its own function; a future
+# kitty/alacritty terminal backend or another splash backend is a new function, not
+# a rewrite (see README roadmap).
+
+set -uo pipefail
+
+# Ghostty ships theme files as `palette = N=#rrggbb` / `background = #rrggbb` lines.
+THEME_DIR="${GHOSTTY_RESOURCES_DIR:-/usr/share/ghostty}/themes"
+
+# --- tty plumbing -----------------------------------------------------------------
+# Escapes go to the controlling terminal, never to stdout: stdout may be a pipe
+# (scp, rsync, git-over-ssh) where stray escape bytes corrupt the stream. Unlike
+# color-ghostty we do NOT bail without a tty — the config persistence and splash
+# sync are file side effects that future windows read; only the emits go quiet.
+if { exec 3>/dev/tty; } 2>/dev/null; then HAVE_TTY=1; else HAVE_TTY=0; fi
+
+# tmux/screen swallow unknown OSC unless explicitly passed through to the outer term.
+emit() {  # <osc-payload>
+    [ "$HAVE_TTY" = 1 ] || return 0
+    if [ -n "${TMUX:-}" ]; then
+        printf '\033Ptmux;\033\033]%s\033\033\\\033\\' "$1" >&3
+    elif [ -n "${STY:-}" ]; then
+        printf '\033P\033]%s\033\\\033\\' "$1" >&3
+    else
+        printf '\033]%s\033\\' "$1" >&3
+    fi
+}
+
+# --reset: hand the terminal back to its *configured* colours (OSC 104 = palette,
+# 110/111/112 = fg/bg/cursor). Used by the shell hook when an ssh session ends, so
+# your local window returns to its own theme rather than keeping the remote's.
+# Splash settings are local files the remote never touched, so they are left alone.
+if [ "${1:-}" = "--reset" ]; then
+    emit "104"
+    for code in 110 111 112; do emit "$code"; done
+    exit 0
+fi
+
+# --- pick -------------------------------------------------------------------------
+
+THEMES=(
+    "Catppuccin Mocha"
+    "Catppuccin Latte"
+    "Dracula"
+    "Solarized Light"
+    "Solarized Dark Patched"
+    "Monokai Pro"
+    "Gruvbox Light"
+    "Gruvbox Dark"
+    "Nord"
+    "Cyberpunk"
+    "Rose Pine Dawn"
+    "Rose Pine Moon"
+    "TokyoNight"
+    "Synthwave Everything"
+    "Ayu Light"
+    "Ayu Mirage"
+    "Batman"
+    "Matrix"
+    "Zenbones"
+    "Alabaster"
+    "Neon"
+    "Fairyfloss"
+    "C64"
+    "Hot Dog Stand"
+)
+
+# Same history file as color-ghostty on purpose: running either tool feeds the
+# other's anti-repeat window.
+STATE_FILE="${XDG_CACHE_HOME:-$HOME/.cache}/ghostty_theme_history"
+mkdir -p "$(dirname "$STATE_FILE")"
+touch "$STATE_FILE"
+
+# Exclude the last 5 picks so back-to-back windows don't repeat.
+LAST_THEMES=$(tail -n 5 "$STATE_FILE" 2>/dev/null || true)
+
+AVAILABLE=()
+for t in "${THEMES[@]}"; do
+    if ! echo "$LAST_THEMES" | grep -qx "$t"; then
+        AVAILABLE+=("$t")
+    fi
+done
+if [ ${#AVAILABLE[@]} -eq 0 ]; then
+    AVAILABLE=("${THEMES[@]}")
+fi
+
+PICK="${AVAILABLE[$RANDOM % ${#AVAILABLE[@]}]}"
+
+echo "$PICK" >> "$STATE_FILE"
+tail -n 5 "$STATE_FILE" > "$STATE_FILE.tmp"
+mv "$STATE_FILE.tmp" "$STATE_FILE"
+
+# --- terminal backend: ghostty ----------------------------------------------------
+# Ghostty theme file -> OSC. Keys we don't map are ignored rather than guessed at;
+# ghostty logs "setting dynamic color not implemented" for some special colours, so
+# every emit here is best-effort and must stay non-fatal.
+apply_ghostty() {  # <theme name>
+    local theme_file="$THEME_DIR/$1" line key val idx col
+    [ -r "$theme_file" ] || return 0
+    while IFS= read -r line; do
+        # NB: do NOT strip from '#' as a comment — '#' starts every colour value here.
+        # Only a leading '#' is a comment.
+        case "${line#"${line%%[![:space:]]*}"}" in '#'*|'') continue ;; esac
+        case "$line" in *=*) ;; *) continue ;; esac
+        key="${line%%=*}"; val="${line#*=}"
+        key="$(printf '%s' "$key" | tr -d '[:space:]')"
+        val="$(printf '%s' "$val" | tr -d '[:space:]')"
+        case "$key" in
+            palette)
+                # val is "N=#rrggbb" (the '=' we split on was the first one)
+                idx="${val%%=*}"; col="${val#*=}"
+                [ -n "$idx" ] && [ -n "$col" ] && emit "4;${idx};${col}"
+                ;;
+            foreground)          emit "10;${val}" ;;
+            background)          emit "11;${val}" ;;
+            cursor-color)        emit "12;${val}" ;;
+            selection-background) emit "17;${val}" ;;
+            selection-foreground) emit "19;${val}" ;;
+        esac
+    done < "$theme_file"
+}
+
+# Persist, but only for a genuinely local ghostty: GHOSTTY_RESOURCES_DIR is exported
+# by the ghostty process itself and is NOT forwarded over ssh, so this is precisely
+# "am I running inside the terminal I just recoloured". On a remote host it would
+# only make that host's unused config drift, so we skip it.
+persist_ghostty() {  # <theme name>
+    [ -n "${GHOSTTY_RESOURCES_DIR:-}" ] && [ -z "${SSH_CONNECTION:-}" ] || return 0
+    local config_file="${XDG_CONFIG_HOME:-$HOME/.config}/ghostty/config"
+    mkdir -p "$(dirname "$config_file")"
+    if grep -q "^theme =" "$config_file" 2>/dev/null; then
+        sed -i "s/^theme =.*/theme = $1/" "$config_file"
+    else
+        echo "theme = $1" >> "$config_file"
+    fi
+}
+
+# --- splash backend: splashboard --------------------------------------------------
+# Ghostty theme family -> splashboard theme preset (`splashboard install --theme`
+# names). Empty output means "no family match": the caller writes reset tokens
+# instead, and the splash inherits the terminal colors we just applied.
+map_splash_preset() {  # <theme name>
+    case "$1" in
+        "Catppuccin Mocha")       echo "catppuccin_mocha" ;;
+        "Dracula")                echo "dracula" ;;
+        "Solarized Light")        echo "solarized_light" ;;
+        "Solarized Dark Patched") echo "solarized_dark" ;;
+        "Monokai Pro")            echo "monokai" ;;
+        "Gruvbox Light")          echo "gruvbox_light" ;;
+        "Gruvbox Dark")           echo "gruvbox_dark" ;;
+        "Nord")                   echo "nord" ;;
+        "Rose Pine Dawn")         echo "rose_pine_dawn" ;;
+        "Rose Pine Moon")         echo "rose_pine_moon" ;;
+        "TokyoNight")             echo "tokyo_night" ;;
+        "Synthwave Everything")   echo "synthwave_84" ;;
+        "Ayu Mirage")             echo "ayu_mirage" ;;
+        *)                        echo "" ;;
+    esac
+}
+
+SB_BEGIN="# >>> color-terminal >>>"
+SB_END="# <<< color-terminal <<<"
+
+sync_splashboard() {  # <theme name>
+    local sb_dir="$HOME/.splashboard" settings preset body tmp
+    [ -d "$sb_dir" ] || return 0   # splashboard not set up here (e.g. bare remote host)
+    settings="$sb_dir/settings.toml"
+    touch "$settings" 2>/dev/null || return 0
+
+    preset="$(map_splash_preset "$1")"
+    if [ -n "$preset" ]; then
+        body="preset = \"$preset\""
+    else
+        # No matching preset: inherit the terminal's own colors. panel_title is what
+        # colors the hero animation; bg/bg_subtle stop the splash painting its own
+        # background over the theme's.
+        body=$'panel_title = "reset"\npanel_border = "reset"\nbg = "reset"\nbg_subtle = "reset"'
+    fi
+
+    tmp="$(mktemp "$settings.XXXXXX")" || return 0
+    # Drop any previous managed block, then append the fresh one. This block owns
+    # the file's [theme] table — a second [theme] elsewhere would be a TOML
+    # duplicate-table error, which is why the whole table lives inside the markers.
+    awk -v begin="$SB_BEGIN" -v end="$SB_END" '
+        index($0, begin) == 1 {skip=1}
+        index($0, end) == 1   {skip=0; next}
+        !skip
+    ' "$settings" > "$tmp"
+    # Squash the trailing blank lines a previous removal may have left.
+    while [ -s "$tmp" ] && [ -z "$(tail -n 1 "$tmp")" ]; do
+        sed -i '$d' "$tmp"
+    done
+    {
+        [ -s "$tmp" ] && echo ""
+        echo "$SB_BEGIN"
+        echo "# Managed by color-terminal — rewritten on every run; do not edit inside the"
+        echo "# markers. This is the file's only [theme] table (TOML forbids duplicates);"
+        echo "# to take manual control, delete the whole block."
+        echo "[theme]"
+        echo "$body"
+        echo "$SB_END"
+    } >> "$tmp"
+    mv "$tmp" "$settings"
+}
+
+apply_ghostty "$PICK"
+persist_ghostty "$PICK"
+sync_splashboard "$PICK"
