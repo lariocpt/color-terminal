@@ -1,0 +1,670 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>color-terminal</title>
+<meta name="description" content="color-terminal picks a random colour theme for every new shell and applies it to the terminal you are already looking at, over OSC escape sequences — so it works on any terminal, and over ssh.">
+<meta name="color-scheme" content="light dark">
+<style>
+/* ---------------------------------------------------------------------------
+   Page chrome. Deliberately quiet: the only real colour on this page is the
+   terminal demo, and the chrome must not compete with it.
+   Light palette is defined on bare :root; dark overrides follow.
+   --------------------------------------------------------------------------- */
+:root {
+  --bg:        #fdfdfc;
+  --bg-sunk:   #f4f4f1;
+  --fg:        #1b1b19;
+  --fg-muted:  #6a6a63;
+  --fg-faint:  #8d8d85;
+  --rule:      #e2e2dc;
+  --rule-firm: #cfcfc7;
+  --accent:    #8a5a00;
+  --code-bg:   #f4f4f1;
+  --shadow:    0 1px 2px rgba(0,0,0,.05), 0 12px 32px -14px rgba(0,0,0,.28);
+
+  --font-prose: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue",
+                Arial, "Noto Sans", sans-serif;
+  --font-mono:  ui-monospace, SFMono-Regular, "SF Mono", "Cascadia Mono",
+                "Segoe UI Mono", "JetBrains Mono", "Fira Code", Menlo, Consolas,
+                "Liberation Mono", "DejaVu Sans Mono", monospace;
+
+  /* Terminal demo palette. These are the live knobs: the JS cycler rewrites
+     exactly these custom properties on #term and nothing else. Values here are
+     palette 0, so the demo renders correctly with JavaScript disabled. */
+  /* Catppuccin Mocha — palette 0, the no-JavaScript default */
+  --ct-bg: #1e1e2e;
+  --ct-fg: #cdd6f4;
+  --ct-color0:  #45475a;
+  --ct-color1:  #f38ba8;
+  --ct-color2:  #a6e3a1;
+  --ct-color3:  #f9e2af;
+  --ct-color4:  #89b4fa;
+  --ct-color5:  #f5c2e7;
+  --ct-color6:  #94e2d5;
+  --ct-color7:  #a6adc8;
+  --ct-color8:  #585b70;
+  --ct-color9:  #f37799;
+  --ct-color10: #89d88b;
+  --ct-color11: #ebd391;
+  --ct-color12: #74a8fc;
+  --ct-color13: #f2aede;
+  --ct-color14: #6bd7ca;
+  --ct-color15: #bac2de;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg:        #131314;
+    --bg-sunk:   #1b1b1d;
+    --fg:        #e6e6e3;
+    --fg-muted:  #a0a09a;
+    --fg-faint:  #7c7c77;
+    --rule:      #2a2a2d;
+    --rule-firm: #3a3a3e;
+    --accent:    #e0b062;
+    --code-bg:   #1b1b1d;
+    --shadow:    0 1px 2px rgba(0,0,0,.4), 0 12px 40px -16px rgba(0,0,0,.75);
+  }
+}
+
+* { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--font-prose);
+  font-size: 16px;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+.wrap {
+  max-width: 46rem;
+  margin: 0 auto;
+  padding: 0 1.25rem;
+}
+
+/* --- masthead ------------------------------------------------------------ */
+
+.masthead { padding: 3.5rem 0 1.75rem; }
+
+h1 {
+  font-family: var(--font-mono);
+  font-size: 1.6rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  margin: 0 0 .5rem;
+}
+
+.tagline {
+  margin: 0;
+  color: var(--fg-muted);
+  font-size: 1.0625rem;
+  max-width: 34rem;
+}
+
+.tagline a { color: inherit; text-decoration-color: var(--rule-firm); }
+
+/* --- terminal demo ------------------------------------------------------- */
+
+.demo { margin: 0 0 1rem; }
+
+.termframe {
+  border: 1px solid var(--rule-firm);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: var(--shadow);
+  background: var(--ct-bg);
+}
+
+.termbar {
+  display: flex;
+  gap: 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: .5rem .85rem;
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  background: var(--ct-bg);
+  color: var(--ct-color8);
+  border-bottom: 1px solid rgba(128, 128, 128, .28);
+  transition: background-color .8s ease, color .8s ease, border-color .8s ease;
+}
+
+.termbar .who { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.termbar .themeid { white-space: nowrap; }
+
+/* The scroll container: wide session output scrolls here, never on <body>. */
+.termscroll {
+  overflow-x: auto;
+  background: var(--ct-bg);
+  transition: background-color .8s ease;
+}
+
+#term {
+  margin: 0;
+  padding: 1rem .95rem 1.15rem;
+  font-family: var(--font-mono);
+  font-size: .8125rem;
+  line-height: 1.75;
+  background: var(--ct-bg);
+  color: var(--ct-fg);
+  transition: background-color .8s ease, color .8s ease;
+}
+
+/* Every span inherits the same cross-fade, so a theme change reads as one
+   continuous wash rather than sixteen independent flips. */
+#term span { transition: color .8s ease, background-color .8s ease; }
+
+#term .c0  { color: var(--ct-color0);  }
+#term .c1  { color: var(--ct-color1);  }
+#term .c2  { color: var(--ct-color2);  }
+#term .c3  { color: var(--ct-color3);  }
+#term .c4  { color: var(--ct-color4);  }
+#term .c5  { color: var(--ct-color5);  }
+#term .c6  { color: var(--ct-color6);  }
+#term .c7  { color: var(--ct-color7);  }
+#term .c8  { color: var(--ct-color8);  }
+#term .c9  { color: var(--ct-color9);  }
+#term .c10 { color: var(--ct-color10); }
+#term .c11 { color: var(--ct-color11); }
+#term .c12 { color: var(--ct-color12); }
+#term .c13 { color: var(--ct-color13); }
+#term .c14 { color: var(--ct-color14); }
+#term .c15 { color: var(--ct-color15); }
+#term .b   { font-weight: 700; }
+
+
+.caret {
+  display: inline-block;
+  width: 1ch;
+  background: var(--ct-fg);
+  color: var(--ct-bg);
+  animation: blink 1.15s steps(1, end) infinite;
+}
+@keyframes blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0; } }
+
+/* --- demo controls (revealed by JS; absent when JS is off) --------------- */
+
+.termnav {
+  display: flex;
+  align-items: center;
+  gap: .6rem;
+  margin-top: .7rem;
+  font-size: .8125rem;
+  color: var(--fg-muted);
+  flex-wrap: wrap;
+}
+.termnav[hidden] { display: none; }
+
+.termnav button {
+  font: inherit;
+  font-family: var(--font-mono);
+  color: var(--fg-muted);
+  background: transparent;
+  border: 1px solid var(--rule-firm);
+  border-radius: 6px;
+  padding: .15rem .55rem;
+  cursor: pointer;
+  line-height: 1.5;
+}
+.termnav button:hover { color: var(--fg); border-color: var(--fg-faint); }
+.termnav button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+.dots { display: flex; gap: .35rem; }
+.dots span {
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--rule-firm);
+}
+.dots span.on { background: var(--fg-faint); }
+
+.termnav .now {
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  color: var(--fg-faint);
+}
+
+/* --- sections ------------------------------------------------------------ */
+
+section { padding: 2.25rem 0; border-top: 1px solid var(--rule); }
+
+h2 {
+  font-size: .8125rem;
+  font-weight: 600;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  color: var(--fg-faint);
+  margin: 0 0 1rem;
+}
+
+p { margin: 0 0 .9rem; max-width: 38rem; }
+p:last-child { margin-bottom: 0; }
+
+a { color: var(--accent); text-underline-offset: 2px; }
+
+code {
+  font-family: var(--font-mono);
+  font-size: .875em;
+  background: var(--code-bg);
+  border-radius: 4px;
+  padding: .1em .35em;
+}
+
+pre {
+  margin: 0;
+  overflow-x: auto;
+  background: var(--code-bg);
+  border: 1px solid var(--rule);
+  border-radius: 8px;
+  padding: .85rem 1rem;
+  line-height: 1.7;
+}
+pre code {
+  background: none;
+  padding: 0;
+  font-size: .8125rem;
+  white-space: pre;
+}
+pre .cmt { color: var(--fg-faint); }
+
+/* --- install block ------------------------------------------------------- */
+
+.install { position: relative; margin-top: 2.6rem; }
+
+.copy {
+  position: absolute;
+  bottom: 100%;
+  right: 0;
+  margin-bottom: .45rem;
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: .75rem;
+  color: var(--fg-muted);
+  background: var(--bg);
+  border: 1px solid var(--rule-firm);
+  border-radius: 6px;
+  padding: .1rem .5rem;
+  cursor: pointer;
+  line-height: 1.6;
+}
+.copy:hover { color: var(--fg); border-color: var(--fg-faint); }
+.copy:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.copy[hidden] { display: none; }
+
+/* --- the brake ----------------------------------------------------------- */
+
+.brake {
+  border: 1px solid var(--rule-firm);
+  border-left: 3px solid var(--accent);
+  border-radius: 8px;
+  padding: 1.1rem 1.2rem .35rem;
+  background: var(--bg-sunk);
+  margin-top: 1rem;
+}
+.brake dl { margin: 0; }
+.brake dt {
+  font-family: var(--font-mono);
+  font-size: .8125rem;
+  margin: 0 0 .15rem;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding-bottom: .1rem;
+}
+.brake dt code { background: none; padding: 0; font-size: 1em; color: var(--fg); }
+.brake dd {
+  margin: 0 0 1rem;
+  color: var(--fg-muted);
+  font-size: .9375rem;
+}
+
+/* --- shared chrome for the phase-2 generated sections --------------------- */
+
+.scroller { overflow-x: auto; }
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: .9375rem;
+}
+th, td {
+  text-align: left;
+  padding: .4rem .6rem;
+  border-bottom: 1px solid var(--rule);
+  vertical-align: top;
+}
+th {
+  font-weight: 600;
+  font-size: .8125rem;
+  color: var(--fg-muted);
+}
+
+/* --- footer -------------------------------------------------------------- */
+
+footer {
+  border-top: 1px solid var(--rule);
+  padding: 1.75rem 0 3.5rem;
+  color: var(--fg-faint);
+  font-size: .875rem;
+}
+footer p { margin: 0; }
+
+/* --- motion preference --------------------------------------------------- */
+
+@media (prefers-reduced-motion: reduce) {
+  * , #term span, .termbar, .termscroll, #term {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .caret { animation: none; opacity: 1; }
+}
+
+@media (max-width: 30rem) {
+  .masthead { padding-top: 2.5rem; }
+  h1 { font-size: 1.35rem; }
+  #term { font-size: .75rem; }
+}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <h1>color-terminal</h1>
+    <p class="tagline">
+      A new colour theme in every shell you open — applied live, to the window
+      you are already typing in. <a href="#stop">How to make it stop.</a>
+    </p>
+  </header>
+
+  <main>
+
+  <div class="demo">
+    <div class="termframe">
+      <div class="termbar">
+        <span class="who">lario@mini: ~/src/color-terminal — zsh</span>
+        <span class="themeid" id="termbar-theme">catppuccin-mocha</span>
+      </div>
+      <div class="termscroll">
+<pre id="term" role="img" aria-label="A mock shell session — prompt, ls, git status, and an ssh login — repainted every few seconds in a different colour theme."><span class="c2 b">lario@mini</span> <span class="c4 b">~/src/color-terminal</span> <span class="c5">main</span> <span class="c3">✱</span>
+<span class="c2">❯</span> ls
+<span class="c4 b">bin</span>  <span class="c4 b">docs</span>  <span class="c4 b">lib</span>  <span class="c4 b">shell</span>  <span class="c4 b">themes</span>  <span class="c2 b">install.sh</span>  README.md
+
+<span class="c2">❯</span> git status --short
+<span class="c3"> M</span> lib/palette.sh
+<span class="c1">??</span> themes/kanagawa-lotus.theme
+
+<span class="c2">❯</span> color-terminal
+<span class="c6">→</span> <span class="c6 b" id="term-theme">catppuccin-mocha</span> <span class="c8">· 16 colours + bg/fg · 0 bytes to stdout</span>
+
+<span class="c2">❯</span> ssh nas <span class="c8"># the remote shell recolours this window</span>
+<span class="c2 b">lario@nas</span> <span class="c4 b">~</span> <span class="c8">$</span> <span class="caret"> </span></pre>
+      </div>
+    </div>
+
+    <div class="termnav" id="termnav" hidden>
+      <button type="button" id="prev" aria-label="Previous theme">‹</button>
+      <div class="dots" id="dots" aria-hidden="true"></div>
+      <button type="button" id="next" aria-label="Next theme">›</button>
+      <span class="now" id="now"></span>
+    </div>
+  </div>
+
+    <section id="what">
+      <h2>What it does</h2>
+      <p>
+        Every time you open a shell, color-terminal picks a theme at random and
+        applies it to the terminal that shell is running in — immediately, with
+        no restart and no config reload.
+      </p>
+      <p>
+        It ships its own theme corpus in a plain text format, so it does not
+        depend on any one terminal's theme directory. Anything that understands
+        OSC colour sequences is supported.
+      </p>
+      <p>
+        It keeps the <a href="https://github.com/unhappychoice/splashboard">splashboard</a>
+        splash palette in step with the pick, so the splash never clashes with
+        the terminal it draws into.
+      </p>
+      <p>
+        Nothing is printed to stdout. Ever. See
+        <a href="#how">how it works</a> for why that matters.
+      </p>
+
+      <div class="install">
+        <pre><code>git clone https://github.com/lariocpt/color-terminal.git
+cd color-terminal
+./install.sh</code></pre>
+        <button type="button" class="copy" id="copy" hidden>copy</button>
+      </div>
+    </section>
+
+    <section id="stop">
+      <h2>Making it stop</h2>
+      <p>
+        A tool that recolours your terminal without being asked owes you a brake.
+        There are four, from “not right now” to “gone”.
+      </p>
+      <div class="brake">
+        <dl>
+          <dt><code>NO_COLOR=1</code></dt>
+          <dd>
+            The <a href="https://no-color.org">no-color.org</a> convention, honoured:
+            if it is set to anything at all, color-terminal does nothing and exits 0.
+          </dd>
+
+          <dt><code>COLOR_TERMINAL=0</code></dt>
+          <dd>
+            Per-shell, per-session off switch — export it in one shell to mute
+            just that shell, or in your rc file to mute the machine.
+          </dd>
+
+          <dt><code>~/.config/color-terminal/hosts/&lt;hostname&gt;</code></dt>
+          <dd>
+            Pin one host to one theme forever: write a theme id into that file and
+            that host stops rolling the dice, on every shell, including over ssh.
+          </dd>
+
+          <dt><code>ct-setup unwire</code></dt>
+          <dd>
+            Full removal. Unhooks the shell rc files, restores the config files it
+            replaced, and leaves your own colours exactly as it found them.
+          </dd>
+        </dl>
+      </div>
+    </section>
+
+    <section id="how">
+      <h2>How it works</h2>
+      <p>
+        The whole mechanism is one kind of escape sequence, OSC — “operating
+        system command”. You write the bytes to your terminal, and the terminal
+        interprets them as instructions about itself rather than as text to draw:
+      </p>
+      <pre><code>printf '\033]4;1;#f38ba8\033\\' &gt; /dev/tty   <span class="cmt"># set ANSI colour 1</span>
+printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the background</span></code></pre>
+      <p>
+        There is no API here, and nothing to install on the terminal side. Colour
+        <em>N</em> in a theme file is the OSC 4 palette index verbatim, so applying
+        a theme is a loop over sixteen of these plus one each for background and
+        foreground.
+      </p>
+      <p>
+        The interesting part is where those bytes go. They travel down the pty —
+        so when the shell is a remote one, <strong>the script running on the far
+        host recolours the window on your desk</strong>. ssh into a box that has
+        color-terminal installed and your local terminal changes colour, with
+        nothing installed locally at all.
+      </p>
+      <p>
+        That is also why the escapes are written to <code>/dev/tty</code> and never
+        to stdout. A stray escape byte on stdout corrupts anything that treats the
+        stream as data — <code>scp</code>, <code>rsync</code> and <code>git</code>
+        over ssh all break, loudly and confusingly, if a login shell prints so
+        much as one byte of it. <code>/dev/tty</code> reaches the terminal
+        while leaving the pipe clean.
+      </p>
+    </section>
+
+    <!-- ==================================================================
+         PHASE 2 INSERTION POINTS
+         Each pair below is a slot. The generator replaces everything BETWEEN a
+         BEGIN and its END with a complete <section>, and leaves the two marker
+         lines themselves untouched so the slot can be regenerated. Empty slots
+         render as nothing. See docs/README.md.
+         ================================================================== -->
+
+    <!-- ct:generated:triggers BEGIN -->
+    <!-- slot: what actually triggers a recolour, and what suppresses one -->
+    <!-- ct:generated:triggers END -->
+
+    <!-- ct:generated:support BEGIN -->
+    <!-- slot: terminal support table, generated from the probe results -->
+    <!-- ct:generated:support END -->
+
+    <!-- ct:generated:gallery BEGIN -->
+    <!-- slot: theme gallery, generated from themes/*.theme -->
+    <!-- ct:generated:gallery END -->
+
+  </main>
+
+  <footer>
+    <p>
+      color-terminal ·
+      <a href="https://github.com/lariocpt/color-terminal">source on GitHub</a> ·
+      themes carry their upstream authorship and licence in the theme file itself
+    </p>
+  </footer>
+
+</div>
+
+<script>
+(function () {
+  "use strict";
+
+  /* The six palettes below are copied verbatim out of the project's own theme
+     files at build time — see docs/README.md. Do not hand-edit them. */
+  var PALETTES = [
+    { id: "catppuccin-mocha", name: "Catppuccin Mocha", variant: "dark",
+      bg: "#1e1e2e", fg: "#cdd6f4",
+      c: ["#45475a", "#f38ba8", "#a6e3a1", "#f9e2af", "#89b4fa", "#f5c2e7", "#94e2d5", "#a6adc8", "#585b70", "#f37799", "#89d88b", "#ebd391", "#74a8fc", "#f2aede", "#6bd7ca", "#bac2de"] },
+    { id: "tokyonight-storm", name: "TokyoNight Storm", variant: "dark",
+      bg: "#24283b", fg: "#c0caf5",
+      c: ["#1d202f", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#a9b1d6", "#4e5575", "#f7768e", "#9ece6a", "#e0af68", "#7aa2f7", "#bb9af7", "#7dcfff", "#c0caf5"] },
+    { id: "gruvbox-material-dark", name: "Gruvbox Material Dark", variant: "dark",
+      bg: "#282828", fg: "#d4be98",
+      c: ["#282828", "#ea6962", "#a9b665", "#d8a657", "#7daea3", "#d3869b", "#89b482", "#d4be98", "#7c6f64", "#ea6962", "#a9b665", "#d8a657", "#7daea3", "#d3869b", "#89b482", "#ddc7a1"] },
+    { id: "rose-pine-moon", name: "Rosé Pine Moon", variant: "dark",
+      bg: "#232136", fg: "#e0def4",
+      c: ["#393552", "#eb6f92", "#3e8fb0", "#f6c177", "#9ccfd8", "#c4a7e7", "#ea9a97", "#e0def4", "#6e6a86", "#eb6f92", "#3e8fb0", "#f6c177", "#9ccfd8", "#c4a7e7", "#ea9a97", "#e0def4"] },
+    { id: "github-light", name: "GitHub Light Default", variant: "light",
+      bg: "#ffffff", fg: "#1f2328",
+      c: ["#24292f", "#cf222e", "#116329", "#4d2d00", "#0969da", "#8250df", "#1b7c83", "#6e7781", "#57606a", "#a40e26", "#1a7f37", "#633c01", "#218bff", "#a475f9", "#3192aa", "#8c959f"] },
+    { id: "kanagawa-lotus", name: "Kanagawa Lotus", variant: "light",
+      bg: "#f2ecbc", fg: "#545464",
+      c: ["#1f1f28", "#c84053", "#6f894e", "#77713f", "#4d699b", "#b35b79", "#597b75", "#545464", "#8a8980", "#d7474b", "#6e915f", "#836f4a", "#6693bf", "#624c83", "#5e857a", "#43436c"] }
+  ];
+
+  var term    = document.getElementById("term");
+  var frame   = term && term.closest ? term.closest(".termframe") : null;
+  var nav     = document.getElementById("termnav");
+  var dotsEl  = document.getElementById("dots");
+  var nowEl   = document.getElementById("now");
+  var barId   = document.getElementById("termbar-theme");
+  var termId  = document.getElementById("term-theme");
+  if (!term || !nav || !PALETTES.length) return;
+
+  var idx = 0;
+  var timer = null;
+  var userDriving = false;
+  var reduce = window.matchMedia
+    ? window.matchMedia("(prefers-reduced-motion: reduce)")
+    : { matches: false, addEventListener: null };
+
+  /* Build the position dots. */
+  var dots = [];
+  for (var i = 0; i < PALETTES.length; i++) {
+    var d = document.createElement("span");
+    dotsEl.appendChild(d);
+    dots.push(d);
+  }
+
+  /* The bar, the scroll box and the <pre> all read the same properties, so the
+     whole demo is repainted by writing them once on the enclosing frame. */
+  var host = frame || term;
+
+  function apply(n) {
+    var p = PALETTES[n];
+    var s = host.style;
+    s.setProperty("--ct-bg", p.bg);
+    s.setProperty("--ct-fg", p.fg);
+    for (var i = 0; i < 16; i++) s.setProperty("--ct-color" + i, p.c[i]);
+    if (barId)  barId.textContent  = p.id;
+    if (termId) termId.textContent = p.id;
+    if (nowEl)  nowEl.textContent  = p.name + " · " + p.variant;
+    for (var k = 0; k < dots.length; k++) {
+      dots[k].className = k === n ? "on" : "";
+    }
+    idx = n;
+  }
+
+  function go(step) {
+    apply((idx + step + PALETTES.length) % PALETTES.length);
+  }
+
+  function stopAuto() {
+    if (timer) { clearInterval(timer); timer = null; }
+  }
+
+  function startAuto() {
+    stopAuto();
+    if (reduce.matches || userDriving || document.hidden) return;
+    timer = setInterval(function () { go(1); }, 4000);
+  }
+
+  document.getElementById("prev").addEventListener("click", function () {
+    userDriving = true; stopAuto(); go(-1);
+  });
+  document.getElementById("next").addEventListener("click", function () {
+    userDriving = true; stopAuto(); go(1);
+  });
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.hidden) stopAuto(); else startAuto();
+  });
+
+  if (reduce.addEventListener) {
+    reduce.addEventListener("change", startAuto);
+  }
+
+  nav.hidden = false;   /* controls exist only once they can do something */
+  apply(0);
+  startAuto();
+
+  /* --- install-command copy button ------------------------------------- */
+  var copy = document.getElementById("copy");
+  if (copy && navigator.clipboard) {
+    copy.hidden = false;
+    copy.addEventListener("click", function () {
+      var code = document.querySelector(".install pre code");
+      navigator.clipboard.writeText(code.textContent).then(function () {
+        copy.textContent = "copied";
+        setTimeout(function () { copy.textContent = "copy"; }, 1600);
+      }, function () {
+        copy.textContent = "select it";
+        setTimeout(function () { copy.textContent = "copy"; }, 1600);
+      });
+    });
+  }
+})();
+</script>
+
+</body>
+</html>

@@ -1,0 +1,35 @@
+# Converted from ghostty theme "Kanagawa Lotus" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Kanagawa Lotus
+variant = light
+family = kanagawa
+pairs-with = kanagawa-wave
+author = rebelot
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+
+background = #f2ecbc
+foreground = #545464
+cursor = #43436c
+cursor-text = #f2ecbc
+selection-background = #545464
+selection-foreground = #f2ecbc
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #1f1f28
+color1 = #c84053
+color2 = #6f894e
+color3 = #77713f
+color4 = #4d699b
+color5 = #b35b79
+color6 = #597b75
+color7 = #545464
+color8 = #8a8980
+color9 = #d7474b
+color10 = #6e915f
+color11 = #836f4a
+color12 = #6693bf
+color13 = #624c83
+color14 = #5e857a
+color15 = #43436c

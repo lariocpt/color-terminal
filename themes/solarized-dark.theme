@@ -1,0 +1,35 @@
+# Converted from ghostty theme "iTerm2 Solarized Dark" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Solarized Dark
+variant = dark
+family = solarized
+author = Ethan Schoonover
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = solarized_dark
+
+background = #002b36
+foreground = #839496
+cursor = #839496
+cursor-text = #073642
+selection-background = #073642
+selection-foreground = #93a1a1
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #073642
+color1 = #dc322f
+color2 = #859900
+color3 = #b58900
+color4 = #268bd2
+color5 = #d33682
+color6 = #2aa198
+color7 = #eee8d5
+color8 = #335e69
+color9 = #cb4b16
+color10 = #586e75
+color11 = #657b83
+color12 = #839496
+color13 = #6c71c4
+color14 = #93a1a1
+color15 = #fdf6e3

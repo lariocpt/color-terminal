@@ -1,0 +1,35 @@
+# Converted from ghostty theme "Onenord Light" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Onenord Light
+variant = light
+family = onenord
+pairs-with = onenord
+author = rmehri01
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+
+background = #f7f8fa
+foreground = #2e3440
+cursor = #3879c5
+cursor-text = #f7f8fa
+selection-background = #eaebed
+selection-foreground = #000000
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #2e3440
+color1 = #cb4f53
+color2 = #48a53d
+color3 = #ee5e25
+color4 = #3879c5
+color5 = #9f4aca
+color6 = #3ea1ad
+color7 = #b2b6bd
+color8 = #646a76
+color9 = #d16366
+color10 = #5f9e9d
+color11 = #ba793e
+color12 = #1b40a6
+color13 = #9665af
+color14 = #8fbcbb
+color15 = #eceff4

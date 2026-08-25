@@ -1,0 +1,35 @@
+# Converted from ghostty theme "Nord" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Nord
+variant = dark
+family = nord
+author = Arctic Ice Studio
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = nord
+
+background = #2e3440
+foreground = #d8dee9
+cursor = #eceff4
+cursor-text = #282828
+selection-background = #eceff4
+selection-foreground = #4c566a
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #3b4252
+color1 = #bf616a
+color2 = #a3be8c
+color3 = #ebcb8b
+color4 = #81a1c1
+color5 = #b48ead
+color6 = #88c0d0
+color7 = #e5e9f0
+color8 = #596377
+color9 = #bf616a
+color10 = #a3be8c
+color11 = #ebcb8b
+color12 = #81a1c1
+color13 = #b48ead
+color14 = #8fbcbb
+color15 = #eceff4
