@@ -240,6 +240,47 @@ n=$(wc -l < "$H/.local/state/color-terminal/history" 2>/dev/null || echo 0)
 if [ "$n" -eq 1 ]; then ok "trigger=pane: a second shell in the same pane does not re-randomize"
 else nope "trigger=pane: second shell declines" "history has $n entries, expected 1"; fi
 
+section "self-installing artifact"
+
+# The published artifact is ONE file with the themes and hook templates appended after
+# its final `exit`. This is the property the apps plane depends on: it does
+# download -> sha256sum -c -> install -m0755 and nothing else, so anything the tool
+# needs at runtime has to travel inside the file.
+newhome
+ISO="$SANDBOX/iso$RANDOM"; mkdir -p "$ISO/run" "$ISO/elsewhere"
+cp "$REPO/dist/color-terminal" "$ISO/elsewhere/color-terminal"
+printf 'export PATH="$HOME/.local/bin:$PATH"\n\n# >>> splashboard >>>\nsplash\n# <<< splashboard <<<\n' > "$ISO/.zshrc"
+( cd "$ISO/elsewhere" && HOME="$ISO" XDG_RUNTIME_DIR="$ISO/run" CT_QUIET=1 ./color-terminal --install ) >/dev/null 2>&1
+n=$(ls "$ISO/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+is "one file installs all 24 themes with no checkout present" "$n" "24"
+[ -x "$ISO/.local/bin/color-terminal" ] && ok "one file installs the binary" || nope "one file installs the binary"
+[ -r "$ISO/.config/color-terminal/hook.zsh" ] && ok "one file generates the shell hooks" || nope "one file generates the shell hooks"
+hookline=$(grep -n 'color-terminal hook' "$ISO/.zshrc" | head -1 | cut -d: -f1)
+splashline=$(grep -n 'splashboard' "$ISO/.zshrc" | head -1 | cut -d: -f1)
+if [ -n "$hookline" ] && [ -n "$splashline" ] && [ "$hookline" -lt "$splashline" ]; then
+    ok "the hook is spliced ABOVE splashboard (the splash must render after the sync)"
+else
+    nope "hook ordering vs splashboard" "hook at ${hookline:-none}, splashboard at ${splashline:-none}"
+fi
+
+# The payload sits after the final `exit`, so bash must never parse it. Proven by
+# appending bytes that are not valid shell and checking the tool still runs.
+cp "$REPO/dist/color-terminal" "$SANDBOX/garbage"
+printf 'this ( is ) not && valid || shell ;;; done fi esac\n' >> "$SANDBOX/garbage"
+chmod +x "$SANDBOX/garbage"
+if HOME="$ISO" "$SANDBOX/garbage" --version >/dev/null 2>&1; then
+    ok "invalid bytes after the payload marker are never parsed (payload is free at startup)"
+else
+    nope "payload is not parsed" "bash read past the final exit"
+fi
+
+( cd "$ISO/elsewhere" && HOME="$ISO" XDG_RUNTIME_DIR="$ISO/run" CT_QUIET=1 ./color-terminal --uninstall ) >/dev/null 2>&1
+if [ ! -e "$ISO/.local/bin/color-terminal" ] && ! grep -q 'color-terminal hook' "$ISO/.zshrc"; then
+    ok "--uninstall removes the binary and the rc hook"
+else
+    nope "--uninstall is complete"
+fi
+
 section "golden — rendered config fragments"
 
 if [ -d test/golden ] && [ -n "$(ls -A test/golden 2>/dev/null)" ]; then

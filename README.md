@@ -4,11 +4,25 @@ Recolors the terminal you are typing in. Every new terminal pane picks a theme f
 bundled corpus and applies it live, over ssh included.
 
 ```sh
-git clone https://github.com/lariocpt/color-terminal && cd color-terminal
-./install.sh
+curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- color-terminal
+color-terminal --install
 ```
 
-Open a new window. To stop it: `NO_COLOR=1`, `COLOR_TERMINAL=0`, or `./install.sh --uninstall`.
+That is the way every machine on the estate should get it — the same apps plane that
+serves `opn`, `crust`, `sleepless` and `niri-spaces`. From a checkout, `./install.sh`
+does the same thing. From nothing at all:
+
+```sh
+scp dist/color-terminal remote: && ssh remote ./color-terminal --install
+```
+
+All three run identical code, because the installer lives *inside* the artifact. The
+published file is one ~88 KB bash script with the 24 themes and both shell-hook
+templates appended after its final `exit` — bash never parses past that, so the payload
+costs nothing at shell start and `--install` reads the file's own tail to unpack it.
+
+Open a new window. To stop it: `NO_COLOR=1`, `COLOR_TERMINAL=0`, or
+`color-terminal --uninstall`.
 
 ## How it works
 
@@ -132,7 +146,7 @@ Skipped entirely over ssh — the splash is a local artifact.
 ## Development
 
 ```sh
-make dist              # amalgamate lib/*.sh into ONE file: dist/color-terminal
+make dist              # amalgamate lib/*.sh into ONE self-installing file
 make lint              # syntax + shellcheck + theme validation
 make test              # unit, pty-level escape assertions, concurrency, latency
 make test-terminals    # real terminals in podman, headless
@@ -141,8 +155,11 @@ make themes            # rebuild the corpus from ghostty's, via tools/import-sch
 ```
 
 `lib/*.sh` is source-only and never installed. `make dist` concatenates it into one
-self-contained script, which is both how it stays `scp`-able to a bare remote host and
-how it avoids fifteen `open()` calls at every shell start.
+self-contained script and appends the themes and hook templates as a payload, which is
+how it stays `scp`-able to a bare host, how it avoids fifteen `open()` calls at every
+shell start, and how it fits the apps plane's one-raw-binary-per-tool contract.
+`Jenkinsfile` publishes it on every push to main; the gate is the full test suite, so a
+red run never reaches `/srv/apps`.
 
 Adding a terminal is one file in `lib/backends/` implementing six functions, plus one
 line in `CT_BACKENDS`; see the contract at the top of `lib/backend.sh`.

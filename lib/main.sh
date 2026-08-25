@@ -12,10 +12,21 @@ Usage:
   color-terminal --print-detected
                                  print "<terminal> <local|remote> <confidence>"
   color-terminal --doctor        explain what was detected and what will happen
-  color-terminal --wire          add our include line to this terminal's config
+  color-terminal --install       install: themes, shell hooks, rc wiring, terminal
+                                 config include. Everything needed rides inside this
+                                 one file, so this works on a machine with nothing
+                                 else set up.
+  color-terminal --uninstall     remove all of it again
+  color-terminal --wire          add just the include line to this terminal's config
   color-terminal --unwire        remove it again, and our palette fragment
   color-terminal --dry-run       say what would happen; emit nothing, write nothing
   color-terminal --version
+
+Install options:
+  --trigger=pane|shell|manual    when colors change (default: pane)
+  --no-wire                      do not touch the terminal's own config
+  --prefix=DIR                   install root (default: ~/.local)
+  --quiet                        no progress output
 
 Environment:
   NO_COLOR=1            do nothing (no-color.org convention)
@@ -53,6 +64,7 @@ ct_should_swap() {
 ct_main() {
     local action=swap
     CT_OPT_terminal= CT_OPT_theme= CT_DRY=0 CT_FROM_HOOK=0
+    CT_OPT_trigger= CT_NO_WIRE=0 CT_QUIET=${CT_QUIET:-0} CT_PREFIX=${CT_PREFIX:-$HOME/.local}
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -62,6 +74,14 @@ ct_main() {
             --doctor)           action=doctor ;;
             --wire)             action=wire ;;
             --unwire)           action=unwire ;;
+            --install)          action=install ;;
+            --uninstall)        action=uninstall ;;
+            --no-wire)          CT_NO_WIRE=1 ;;
+            --trigger)          shift; CT_OPT_trigger=${1:-} ;;
+            --trigger=*)        CT_OPT_trigger=${1#--trigger=} ;;
+            --prefix)           shift; CT_PREFIX=${1:-} ;;
+            --prefix=*)         CT_PREFIX=${1#--prefix=} ;;
+            --quiet|-q)         CT_QUIET=1 ;;
             --hook)             CT_FROM_HOOK=1 ;;
             --dry-run|-n)       CT_DRY=1 ;;
             --theme)            shift; CT_OPT_theme=${1:-} ;;
@@ -109,7 +129,9 @@ ct_main() {
                 printf '%-24s %-5s\n' "${CT_THEME_IDS[i]}" "${CT_THEME_VARIANTS[i]}"
             done
             return 0 ;;
-        doctor)   ct_doctor; return 0 ;;
+        doctor)    ct_doctor; return 0 ;;
+        install)   ct_install; return $? ;;
+        uninstall) ct_uninstall; return $? ;;
         wire)     [ "$CT_DRY" = 1 ] && { printf 'would wire %s\n' "$CT_TERM"; return 0; }
                   ct_wire; return $? ;;
         unwire)   [ "$CT_DRY" = 1 ] && { printf 'would unwire %s\n' "$CT_TERM"; return 0; }
