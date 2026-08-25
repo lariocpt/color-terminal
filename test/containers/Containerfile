@@ -1,0 +1,80 @@
+# test/containers/Containerfile — real terminal emulators, headless, no GPU.
+#
+# This image is a terminal *zoo*, not an application image. It exists so that
+# color-terminal can be pointed at kitty/alacritty/xterm/foot/wezterm as they
+# actually ship, and then those terminals can be asked — over their own escape
+# protocol — what colour they are currently wearing.
+#
+# The image deliberately does NOT contain color-terminal or the theme corpus.
+# run.sh bind-mounts dist/color-terminal (the single amalgamated file `make dist`
+# produces, which is what a user actually installs), the themes/ directory, and
+# test/containers/ itself at run time. That keeps the image stable across code
+# changes: you edit lib/*.sh, re-run, and never rebuild this.
+#
+# Arch base on purpose: it is the only distro that carries current kitty,
+# alacritty, foot, xterm AND wezterm in one repo with no PPAs or AppImages, so
+# the terminals under test are the same builds a user gets.
+
+FROM docker.io/library/archlinux:latest
+
+# One layer. Splitting the install would only cost image size, and nothing here is
+# version-pinned: the point of this rig is to run against whatever the terminals
+# currently are, so a floating tag is the correct choice and a rebuild is the
+# mechanism by which the tests notice a regression upstream.
+#
+#   foot        Wayland-native, software rendered (no GL at all)
+#   kitty       needs OpenGL 3.3 -> mesa/llvmpipe
+#   alacritty   needs GLES2      -> mesa/llvmpipe
+#   wezterm     needs GL, has a software front end
+#   xterm       X11, needs Xvfb + a real X core font
+#   cage        single-app wlroots compositor; exits when its child exits
+#   xorg-server-xvfb   the X side of the same idea
+#   grim        wlr-screencopy screenshotter — the pixel fallback oracle.
+#               ppm output is why this rig needs no image library to read it.
+#   ttf-dejavu + xorg-fonts-misc
+#               WITHOUT THESE EVERY GUI TERMINAL EXITS WITH "no fonts found",
+#               which is indistinguishable from a crash. Not optional.
+RUN pacman -Syu --noconfirm --needed \
+        foot \
+        kitty \
+        alacritty \
+        wezterm \
+        xterm \
+        cage \
+        xorg-server-xvfb \
+        grim \
+        mesa \
+        ttf-dejavu \
+        xorg-fonts-misc \
+        fontconfig \
+        python \
+    && fc-cache -f \
+    && pacman -Scc --noconfirm \
+    && rm -rf /var/cache/pacman/pkg/* /var/lib/pacman/sync/* /usr/share/man /usr/share/doc
+
+# Software rendering everywhere. There is no GPU in this container and no DRM node
+# to open, so every layer has to be told to stop looking for one.
+#
+#   WLR_BACKENDS=headless   wlroots renders to memory, never to a DRM connector
+#   WLR_RENDERER            pixman (pure CPU) is the default this rig asks for;
+#                           run.sh overrides it to gles2 for clients whose EGL
+#                           refuses to negotiate a buffer over plain wl_shm
+#   WLR_LIBINPUT_NO_DEVICES stops wlroots aborting when it finds no input devices
+#   LIBSEAT_BACKEND=noop    there is no logind/seatd in a container
+#   LIBGL_ALWAYS_SOFTWARE   mesa -> llvmpipe for the *clients* (kitty, alacritty)
+ENV WLR_BACKENDS=headless \
+    WLR_RENDERER=pixman \
+    WLR_LIBINPUT_NO_DEVICES=1 \
+    LIBSEAT_BACKEND=noop \
+    LIBGL_ALWAYS_SOFTWARE=1 \
+    GALLIUM_DRIVER=llvmpipe \
+    XDG_RUNTIME_DIR=/run/user/0 \
+    HOME=/root \
+    LANG=C.UTF-8
+
+# Wayland's socket directory must exist and be 0700 or libwayland refuses it.
+RUN mkdir -p /run/user/0 && chmod 700 /run/user/0
+
+# run.sh bind-mounts test/containers over /rig and drives this itself, so there is
+# no ENTRYPOINT: the image is a toolbox, not a program.
+CMD ["/bin/bash"]

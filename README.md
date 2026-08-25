@@ -147,7 +147,11 @@ how it avoids fifteen `open()` calls at every shell start.
 Adding a terminal is one file in `lib/backends/` implementing six functions, plus one
 line in `CT_BACKENDS`; see the contract at the top of `lib/backend.sh`.
 
-The tests do not require a single terminal emulator to be installed: `test/faketerm.py`
-allocates a pty, becomes the terminal, and asserts the exact bytes.
+Three test layers. `test/run.sh` needs no terminal emulator at all — `test/faketerm.py`
+allocates a pty, becomes the terminal, and asserts the exact bytes. `test/live/run.sh`
+opens real windows in whatever is installed here. `make test-terminals` brings its own
+terminals in podman and currently verifies **foot, kitty, alacritty and xterm** by
+asking each one back what colour it is now using; kitty is cross-checked against
+`kitten @ get-colors` as an independent second oracle.
 
 Budget: a full swap costs ~20 ms and a nested-shell no-op ~8 ms, both asserted in CI.
