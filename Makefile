@@ -14,7 +14,7 @@ DIST := dist/color-terminal
 LIBS := lib/common.sh lib/config.sh lib/theme.sh lib/pick.sh lib/state.sh \
         lib/detect.sh lib/emit.sh lib/rcsplice.sh lib/backend.sh \
         lib/backends/generic.sh lib/backends/ghostty.sh lib/backends/foot.sh \
-        lib/sinks/splashboard.sh lib/doctor.sh lib/main.sh
+        lib/sinks/splashboard.sh lib/doctor.sh lib/install.sh lib/main.sh
 
 .PHONY: all dist lint test test-live test-terminals golden themes docs install uninstall clean
 
@@ -32,9 +32,17 @@ $(DIST): $(LIBS)
 	  echo 'CT_REPO_DIR='; \
 	  for f in $(LIBS); do echo; echo "# ---- $$f ----"; sed -e '1{/^#!/d}' "$$f"; done; \
 	  echo; echo 'ct_main "$$@"'; \
+	  echo 'exit $$?'; \
 	} > $(DIST)
+	@# Everything the tool needs at runtime rides inside this one file. It is appended
+	@# AFTER the final `exit`, so bash never parses it and it costs nothing at shell
+	@# start; --install reads the file's own tail to get it back. This is what keeps
+	@# `scp color-terminal remote:` a working install, and what lets the estate's apps
+	@# plane publish this as a single raw binary like every other tool there.
+	@echo '#__CT_PAYLOAD__' >> $(DIST)
+	@tar czf - themes shell | base64 >> $(DIST)
 	@chmod +x $(DIST)
-	@bash -n $(DIST) && echo "dist: $(DIST) ($$(wc -l < $(DIST)) lines)"
+	@bash -n $(DIST) && echo "dist: $(DIST) ($$(wc -l < $(DIST)) lines, $$(wc -c < $(DIST)) bytes)"
 
 lint:
 	@fail=0; \

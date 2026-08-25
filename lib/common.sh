@@ -7,7 +7,7 @@
 # expansion. Every helper below is a bash builtin except where a comment says
 # otherwise and explains why.
 
-CT_VERSION=2.0.0-dev
+CT_VERSION=2.0.0
 
 # --- diagnostics ------------------------------------------------------------------
 # Everything goes to stderr. stdout is reserved for machine-readable output
