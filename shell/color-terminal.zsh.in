@@ -1,0 +1,39 @@
+# color-terminal — recolor this pane on a new shell.
+#
+# Sourced from ~/.zshrc by color-terminal's install.sh. Generated from
+# shell/color-terminal.zsh.in; @BIN@ is substituted at install time.
+#
+# Every condition here is load-bearing, not defensive:
+#
+#  * NO_COLOR / COLOR_TERMINAL are checked FIRST, before anything forks. A tool that
+#    recolors your terminal unprompted needs a brake that costs nothing to apply, and
+#    honouring no-color.org means honouring it even on the path where we would
+#    otherwise not have started.
+#  * interactive + a tty, because color-terminal emits escape sequences and a stray
+#    escape byte on a non-interactive ssh session corrupts scp, rsync and
+#    git-over-ssh.
+#  * NO $TERM gate. v1 had `[[ $TERM == xterm-ghostty* ]]` here, which is why it did
+#    nothing in every other terminal, and nothing at all inside tmux — where TERM has
+#    been rewritten to screen-256color. Deciding which terminal this is belongs to the
+#    tool, which has a four-rung ladder for it and a `generic` backend that is correct
+#    for anything it does not recognise.
+#  * --hook, not a bare call: it tells the tool this is an automatic invocation, so
+#    the trigger policy applies (by default: only the first shell in each pane, so
+#    nested shells do not re-randomise the window while you type).
+#
+# This must be sourced BEFORE the splashboard block in your rc, so the splash palette
+# is in step before the splash renders.
+
+if [[ -z "$NO_COLOR" && "$COLOR_TERMINAL" != (0|no|off|false) ]] \
+   && [[ -o interactive && -t 1 ]] \
+   && [[ -x "@BIN@" ]]; then
+    "@BIN@" --hook >/dev/null 2>&1
+
+    # On a remote host the colours we just set belong to the LOCAL window, so hand
+    # them back when the session ends rather than leaving it wearing the remote's
+    # theme. --reset restores the terminal's configured colours, which locally means
+    # the palette fragment color-terminal maintains: your own last local pick.
+    if [[ -n "$SSH_CONNECTION" ]]; then
+        zshexit() { "@BIN@" --reset >/dev/null 2>&1 }
+    fi
+fi

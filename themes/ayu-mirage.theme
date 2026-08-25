@@ -1,0 +1,35 @@
+# Converted from ghostty theme "Ayu Mirage" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Ayu Mirage
+variant = dark
+family = ayu
+author = Ike Ku
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = ayu_mirage
+
+background = #1f2430
+foreground = #cccac2
+cursor = #ffcc66
+cursor-text = #1f2430
+selection-background = #409fff
+selection-foreground = #1f2430
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #171b24
+color1 = #ed8274
+color2 = #87d96c
+color3 = #facc6e
+color4 = #6dcbfa
+color5 = #dabafa
+color6 = #90e1c6
+color7 = #c7c7c7
+color8 = #686868
+color9 = #f28779
+color10 = #d5ff80
+color11 = #ffd173
+color12 = #73d0ff
+color13 = #dfbfff
+color14 = #95e6cb
+color15 = #ffffff

@@ -1,0 +1,19 @@
+# color-terminal — recolor this pane on a new shell.
+#
+# Sourced from ~/.bashrc by color-terminal's install.sh. Generated from
+# shell/color-terminal.bash.in; @BIN@ is substituted at install time.
+# See the .zsh twin for why each condition exists.
+
+if [ -z "${NO_COLOR:-}" ]; then
+    case "${COLOR_TERMINAL:-}" in
+        0|no|off|false) ;;
+        *)
+            if [[ $- == *i* ]] && [ -t 1 ] && [ -x "@BIN@" ]; then
+                "@BIN@" --hook >/dev/null 2>&1
+                if [ -n "${SSH_CONNECTION:-}" ]; then
+                    trap '"@BIN@" --reset >/dev/null 2>&1' EXIT
+                fi
+            fi
+            ;;
+    esac
+fi

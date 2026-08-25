@@ -1,0 +1,35 @@
+# Converted from ghostty theme "Atom One Dark" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Atom One Dark
+variant = dark
+family = atom-one
+author = Atom (GitHub)
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = one_dark
+
+background = #21252b
+foreground = #abb2bf
+cursor = #abb2bf
+cursor-text = #21252b
+selection-background = #323844
+selection-foreground = #abb2bf
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #21252b
+color1 = #e06c75
+color2 = #98c379
+color3 = #e5c07b
+color4 = #61afef
+color5 = #c678dd
+color6 = #56b6c2
+color7 = #abb2bf
+color8 = #767676
+color9 = #e06c75
+color10 = #98c379
+color11 = #e5c07b
+color12 = #61afef
+color13 = #c678dd
+color14 = #56b6c2
+color15 = #abb2bf

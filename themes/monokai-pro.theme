@@ -1,0 +1,36 @@
+# Converted from ghostty theme "Monokai Pro" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Monokai Pro
+variant = dark
+family = monokai
+pairs-with = monokai-pro-light
+author = Wimer Hazenberg
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = monokai
+
+background = #2d2a2e
+foreground = #fcfcfa
+cursor = #c1c0c0
+cursor-text = #8e8d8d
+selection-background = #5b595c
+selection-foreground = #fcfcfa
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #2d2a2e
+color1 = #ff6188
+color2 = #a9dc76
+color3 = #ffd866
+color4 = #fc9867
+color5 = #ab9df2
+color6 = #78dce8
+color7 = #fcfcfa
+color8 = #727072
+color9 = #ff6188
+color10 = #a9dc76
+color11 = #ffd866
+color12 = #fc9867
+color13 = #ab9df2
+color14 = #78dce8
+color15 = #fcfcfa

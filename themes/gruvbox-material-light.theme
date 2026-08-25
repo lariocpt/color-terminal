@@ -1,0 +1,36 @@
+# Converted from ghostty theme "Gruvbox Material Light" by tools/import-scheme.sh — do not hand-edit.
+# Upstream: mbadolato/iTerm2-Color-Schemes (MIT); ghostty bundles a port of that corpus.
+
+name = Gruvbox Material Light
+variant = light
+family = gruvbox
+pairs-with = gruvbox-material-dark
+author = sainnhe
+upstream = https://github.com/mbadolato/iTerm2-Color-Schemes
+license = MIT
+splash = gruvbox_light
+
+background = #fbf1c7
+foreground = #654735
+cursor = #654735
+cursor-text = #fbf1c7
+selection-background = #654735
+selection-foreground = #fbf1c7
+
+# color<N>: N is the OSC 4 palette index, used verbatim by the runtime.
+color0 = #fbf1c7
+color1 = #c14a4a
+color2 = #6c782e
+color3 = #b47109
+color4 = #45707a
+color5 = #945e80
+color6 = #4c7a5d
+color7 = #654735
+color8 = #a89984
+color9 = #c14a4a
+color10 = #6c782e
+color11 = #b47109
+color12 = #45707a
+color13 = #945e80
+color14 = #4c7a5d
+color15 = #4f3829
