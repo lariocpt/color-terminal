@@ -21,6 +21,9 @@ published file is one ~88 KB bash script with the 24 themes and both shell-hook
 templates appended after its final `exit` — bash never parses past that, so the payload
 costs nothing at shell start and `--install` reads the file's own tail to unpack it.
 
+[**Website**](https://lariocpt.github.io/color-terminal/) — the source is
+[`docs/index.html`](docs/index.html), one self-contained file with no build step.
+
 Open a new window. To stop it: `NO_COLOR=1`, `COLOR_TERMINAL=0`, or
 `color-terminal --uninstall`.
 
