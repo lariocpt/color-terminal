@@ -45,6 +45,12 @@ printf '%.0s-' {1..64}; printf '\n'
 
 FAIL=0 BROKEN=0 PASSED=0
 for t in "${TERMINALS[@]}"; do
+    # A log is only written when a terminal fails or will not start, so the presence of
+    # one has to mean "this terminal failed in the MOST RECENT run". Without clearing it
+    # first, a terminal that has since been fixed keeps a months-old failure log sitting
+    # next to its PASS, and the footer below points people straight at it.
+    rm -f "$REPO/test/containers/last-$t.log"
+
     # The image is a terminal zoo and contains no color-terminal: the binary, the
     # themes and the rig are all bind-mounted, so editing lib/*.sh and re-running
     # never needs a rebuild.
