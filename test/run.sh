@@ -20,6 +20,14 @@ FAILED=()
 # Every test runs against a throwaway HOME. This guard is not paranoia: v1 wrote to
 # five real dotfiles, and a test that leaks would rewrite the developer's own ~/.zshrc
 # and ghostty config.
+#
+# Isolating HOME is not enough on its own. ct_paths_init honours the whole XDG set, so
+# an ambient XDG_CONFIG_HOME sends config, hooks and host pins somewhere the sandbox
+# does not reach — and if it holds its conventional value, "somewhere" is the
+# developer's own ~/.config/color-terminal. GitHub's runners export XDG_CONFIG_HOME,
+# which is how this surfaced. XDG_RUNTIME_DIR is exempt: each test sets it per-home.
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/color-terminal-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 case "$SANDBOX" in /tmp/*|/var/folders/*|"${TMPDIR%/}"/*) ;; *) echo "refusing to run: sandbox $SANDBOX is not under a temp dir" >&2; exit 1 ;; esac
