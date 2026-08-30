@@ -30,7 +30,7 @@ pipeline {
         booleanParam(name: 'FORCE', defaultValue: false,
                description: 'Republish even if this version is already on the plane.')
         booleanParam(name: 'PROVENANCE', defaultValue: true,
-               description: 'Prove the released artifact was built from this tag.')
+               description: 'Rebuild the tag inside the gate container and prove the released artifact is byte-identical.')
     }
     environment {
         TOOL    = 'color-terminal'
@@ -82,8 +82,10 @@ pipeline {
                     test -x /opt/publish/bin/apps-publish || { echo "apps-publish not mounted"; exit 1; }
                     command -v curl      >/dev/null || { echo "curl missing — needed to fetch the release"; exit 1; }
                     command -v sha256sum >/dev/null || { echo "sha256sum missing — nothing may publish unverified"; exit 1; }
-                    command -v python3   >/dev/null || { echo "python3 missing — test/faketerm.py needs it"; exit 1; }
-                    command -v base64    >/dev/null || { echo "base64 missing — needed to read the payload back"; exit 1; }
+                    # The gate needs python3 and make; the Jenkins image has neither, and
+                    # adding them to it would make this pipeline depend on a controller
+                    # rebuild. It runs in a container instead — see the Gate stage.
+                    command -v docker    >/dev/null || { echo "docker missing — the gate runs in a container"; exit 1; }
                     curl -fsS -o /dev/null -m 20 https://github.com \
                         || { echo "no egress to github.com — mirror mode needs it"; exit 1; }
                 '''
@@ -136,83 +138,79 @@ pipeline {
             }
         }
 
-        // What makes "mirror" mean something: proof the released bytes came from this
-        // tag, without rebuilding the thing being published.
-        stage('Provenance') {
-            when {
-                allOf {
-                    environment name: 'NEEDED', value: '1'
-                    expression { params.PROVENANCE }
-                }
-            }
-            steps {
-                sh '''
-                    set -eu
-                    tmp=$(mktemp -d)
-                    trap 'git worktree remove --force "$tmp/src" 2>/dev/null || true; rm -rf "$tmp"' EXIT
-                    mkdir -p "$tmp/payload"
-
-                    # `make dist` is reproducible as of 2.0.0 — the payload tar is built with
-                    # normalised mtimes, ownership and sort order — so the whole artifact can
-                    # be compared byte for byte against a local rebuild of the same tag.
-                    git worktree add --detach "$tmp/src" HEAD >/dev/null
-                    make -s -C "$tmp/src" dist >/dev/null
-                    if cmp -s "$tmp/src/dist/color-terminal" dist/color-terminal; then
-                        echo "provenance: released artifact is byte-identical to a rebuild of $TAG"
-                    else
-                        # Fall back to comparing the two halves separately, so a future change
-                        # that reintroduces nondeterminism degrades to a weaker check with a
-                        # loud explanation rather than a mystery failure.
-                        echo "WARNING: rebuild is not byte-identical — comparing code and payload separately"
-                        for f in "dist/color-terminal" "$tmp/src/dist/color-terminal"; do
-                            n=$(grep -n '^#__CT_PAYLOAD__$' "$f" | head -1 | cut -d: -f1)
-                            [ -n "$n" ] || { echo "FAIL: $f has no payload marker"; exit 1; }
-                            head -n "$((n - 1))" "$f" > "$tmp/code.$(basename "$(dirname "$(dirname "$f")")")"
-                        done
-                        cmp "$tmp"/code.* || { echo "FAIL: the released code is not what $TAG builds"; exit 1; }
-                        sed -n '/^#__CT_PAYLOAD__$/,$p' dist/color-terminal | tail -n +2 \
-                          | base64 -d | tar xz -C "$tmp/payload"
-                        diff -r "$tmp/payload/themes" themes || { echo "FAIL: payload themes differ from $TAG"; exit 1; }
-                        diff -r "$tmp/payload/shell"  shell  || { echo "FAIL: payload hooks differ from $TAG"; exit 1; }
-                    fi
-
-                    # And the file we are about to publish is untouched by any of that.
-                    [ "$(sha256sum dist/color-terminal | awk '{print $1}')" = "$(cat .released-sha)" ] \
-                      || { echo "FAIL: dist/color-terminal changed during provenance"; exit 1; }
-                '''
-            }
-        }
-
+        // One container, one apt, both checks. The Jenkins image has no python3 and no
+        // make, and the workspace is a named volume so it cannot be bind-mounted — the
+        // same constraint crust and opn work around with docker create + docker cp.
         stage('Gate') {
             when { environment name: 'NEEDED', value: '1' }
             steps {
                 sh '''
                     set -eu
 
-                    # Themes are data the tool cannot run without, and a theme that fails the
-                    # contrast gate makes somebody's terminal unreadable.
-                    python3 tools/validate-themes.py
+                    # The in-container half is written to the workspace and copied in with
+                    # everything else, rather than passed as an inline `sh -c` string. Two
+                    # levels of shell quoting nested inside a Groovy string is how this kind
+                    # of script acquires bugs nobody can see.
+                    cat > .ci-gate.sh <<'GATE'
+set -eu
+export DEBIAN_FRONTEND=noninteractive
+apt-get update -qq >/dev/null
+apt-get install -y -qq --no-install-recommends python3 make curl ca-certificates >/dev/null
+cd /w
 
-                    # NOT `make test`. That target depends on the dist rule, and a checkout
-                    # whose lib/*.sh mtimes land after the download would rebuild over the
-                    # released bytes and quietly destroy the point of this pipeline.
-                    ./test/run.sh
+# Themes are data the tool cannot run without, and a theme that fails the contrast gate
+# makes somebody's terminal unreadable.
+python3 tools/validate-themes.py
 
+# NOT `make test`. That target depends on the dist rule, and a checkout whose lib/*.sh
+# mtimes land after the download would rebuild over the released bytes and quietly
+# destroy the point of this pipeline. test/run.sh only rebuilds dist/color-terminal when
+# it is missing or non-executable, and Fetch made it executable.
+./test/run.sh
+
+got=$(./dist/color-terminal --version | tr -d '\r')
+[ "$got" = "color-terminal $VERSION" ] \
+  || { echo "FAIL: artifact reports '$got', expected 'color-terminal $VERSION'"; exit 1; }
+
+# The payload must survive the round trip, or the plane serves a tool with no themes —
+# which fails at first use, not at install time.
+tmp=$(mktemp -d)
+HOME="$tmp" XDG_RUNTIME_DIR="$tmp/run" CT_QUIET=1 ./dist/color-terminal --install --no-wire >/dev/null
+n=$(ls "$tmp/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+[ "$n" -eq 24 ] || { echo "FAIL: artifact installed $n themes, expected 24"; exit 1; }
+echo "payload round-trip: $n themes"
+
+# Provenance, and it is what makes "mirror" mean something: proof the released bytes
+# came from this tag, without rebuilding what actually gets published. `make dist` is
+# reproducible as of 2.0.0 — the payload tar is built with normalised mtimes, ownership
+# and sort order — so a rebuild of this tag must match the published file byte for byte.
+if [ "$PROVENANCE" = true ]; then
+    rm -rf /build && mkdir -p /build
+    tar -cf - --exclude=./dist --exclude=./.git . | tar -xf - -C /build
+    make -s -C /build dist >/dev/null
+    cmp /build/dist/color-terminal /w/dist/color-terminal \
+      || { echo "FAIL: the released artifact is not what $TAG builds"; exit 1; }
+    echo "provenance: released artifact is byte-identical to a rebuild of $TAG"
+fi
+
+# And nothing above touched the file that is about to be published.
+[ "$(sha256sum /w/dist/color-terminal | awk '{print $1}')" = "$(cat /w/.released-sha)" ] \
+  || { echo "FAIL: dist/color-terminal changed during the gate — something rebuilt it"; exit 1; }
+GATE
+
+                    CID=$(docker create -w /w \
+                            -e VERSION="$VERSION" -e TAG="$TAG" -e PROVENANCE="$PROVENANCE" \
+                            debian:stable-slim sh /w/.ci-gate.sh)
+                    trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+                    # docker cp both ways — never -v "$PWD:/w". The workspace lives in a
+                    # named volume that the daemon cannot see at that path.
+                    docker cp "$PWD/." "$CID:/w" >/dev/null
+                    docker start -a "$CID"
+
+                    # The container only ever had a copy, so assert on the host side too
+                    # that what goes to apps-publish is what was downloaded and verified.
                     [ "$(sha256sum dist/color-terminal | awk '{print $1}')" = "$(cat .released-sha)" ] \
-                      || { echo "FAIL: dist/color-terminal changed during the gate — something rebuilt it"; exit 1; }
-
-                    got=$(./dist/color-terminal --version | tr -d '\\r')
-                    [ "$got" = "color-terminal $VERSION" ] \
-                      || { echo "FAIL: artifact reports '$got', expected 'color-terminal $VERSION'"; exit 1; }
-
-                    # The payload must survive the round trip, or the plane serves a tool with
-                    # no themes — which fails at first use, not at install time.
-                    tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
-                    HOME="$tmp" XDG_RUNTIME_DIR="$tmp/run" CT_QUIET=1 \
-                        ./dist/color-terminal --install --no-wire >/dev/null
-                    n=$(ls "$tmp/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
-                    [ "$n" -eq 24 ] || { echo "FAIL: artifact installed $n themes, expected 24"; exit 1; }
-                    echo "payload round-trip: $n themes"
+                      || { echo "FAIL: the workspace artifact changed"; exit 1; }
                 '''
             }
         }
