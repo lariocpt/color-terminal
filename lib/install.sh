@@ -1,15 +1,14 @@
+# shellcheck shell=bash
 # install.sh — the tool installs itself.
 #
-# color-terminal is published to the estate's apps plane as a single raw binary, the
-# same shape as sleepless, opn, crust and niri-spaces:
+# color-terminal is published as a single raw binary and installed by fetching that one
+# file, checking its sha256, and marking it executable:
 #
-#     curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- color-terminal
-#     color-terminal --install
+#     curl -fsSL https://lariocpt.github.io/color-terminal/install.sh | sh
 #
-# That plane does download -> sha256sum -c -> install -m0755 and nothing else, so
-# everything the tool needs at runtime has to travel INSIDE this one file: the 24
-# themes and the two shell-hook templates ride along as a payload appended after the
-# final `exit`.
+# That is the whole installer contract — download, verify, chmod — so everything the
+# tool needs at runtime has to travel INSIDE this one file: the 24 themes and the two
+# shell-hook templates ride along as a payload appended after the final `exit`.
 #
 # Bash never parses past that exit, so the payload costs nothing at shell start — it
 # is only read when --install asks for it. This is the makeself trick and it is why
@@ -19,8 +18,15 @@
 CT_PAYLOAD_MARKER='#__CT_PAYLOAD__'
 
 # Where this script actually lives, so it can read its own tail.
+#
+# The subscript is spelled out rather than written ${BASH_SOURCE[-1]}, which is the
+# obvious form but needs bash 4.3. On bash 3.2 — still /bin/bash on macOS, which this
+# project targets — a negative subscript is a "bad array subscript" error and CT_SELF
+# ends up empty, so ct_has_payload finds nothing and the tool installs with ZERO
+# themes. That failure is silent until first use, which is the worst shape it could
+# have.
 ct_self_path() {
-    CT_SELF=${BASH_SOURCE[-1]:-$0}
+    CT_SELF=${BASH_SOURCE[${#BASH_SOURCE[@]}-1]:-$0}
     case "$CT_SELF" in
         /*) ;;
         *)  CT_SELF="$PWD/$CT_SELF" ;;
@@ -33,7 +39,7 @@ ct_has_payload() {
 }
 
 # Extract the embedded themes/ and shell/ into <dir>. base64 and tar are the only
-# tools this needs and both are already required by the apps-plane installer, so this
+# tools this needs, and both are present anywhere bash and tar already are, so this
 # adds no new dependency to a fresh machine.
 ct_payload_extract() {                        # <destdir>
     ct_self_path
@@ -84,8 +90,8 @@ ct_install() {
 
     ct_payload_dir || return 1
 
-    # Installing over ourselves is the normal case when the apps plane just replaced
-    # this binary, so copying self onto self has to be a no-op rather than a truncation.
+    # Installing over ourselves is the normal case when an upgrade just replaced this
+    # binary, so copying self onto self has to be a no-op rather than a truncation.
     if [ "$self" != "$bin" ]; then
         [ "$CT_DRY" = 1 ] && ct_install_msg "would install $self -> $bin" || {
             ct_mkdir "${bin%/*}"

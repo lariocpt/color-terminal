@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# shellcheck disable=SC2034
 # rcsplice.sh — marker-block surgery on somebody else's file.
 #
 # Used for shell rc files, for terminal config files, and for the splashboard

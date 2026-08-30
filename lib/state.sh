@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# shellcheck disable=SC2154
 # state.sh — what has been picked recently, what the next pane should get, and which
 # panes have already been coloured.
 #
@@ -41,6 +44,7 @@ ct_pane_key() {                               # -> CT_PANE_KEY ("" if undetermin
     [ -n "$sid" ] && [ -r "/proc/$sid/stat" ] || return 1
     IFS= read -r line < "/proc/$sid/stat" || return 1
     rest="${line##*) }"
+    # shellcheck disable=SC2206  # deliberate word-splitting of a known-numeric line
     fields=($rest)
     start="${fields[19]}"                     # starttime
     CT_PANE_KEY="$sid.$start"

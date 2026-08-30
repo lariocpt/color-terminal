@@ -343,6 +343,47 @@ th {
   color: var(--fg-muted);
 }
 
+/* The theme gallery. Every swatch paints itself with its own theme's real colours,
+   set inline by tools/gen-site.py straight out of themes/*.theme — so a card cannot
+   drift from what the tool would actually apply. No images: rule 1 in docs/README.md
+   is that this page makes zero external requests, and a screenshot would be one. */
+.gallery {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(clamp(9rem, 40vw, 12rem), 1fr));
+  gap: .75rem;
+  margin: 1.5rem 0 0;
+}
+
+.swatch {
+  margin: 0;
+  padding: .7rem .8rem .6rem;
+  border-radius: 8px;
+  border: 1px solid var(--rule-firm);
+  font-family: var(--font-mono);
+  overflow: hidden;
+}
+
+.swatch .chips { display: flex; gap: .25rem; margin-bottom: .55rem; }
+.swatch .chips i {
+  flex: 1 1 0;
+  height: .85rem;
+  border-radius: 2px;
+}
+
+.swatch figcaption {
+  font-size: .75rem;
+  line-height: 1.35;
+  /* The caption sits on the theme's own background, so it inherits the theme's
+     foreground rather than the page's — that pairing is the thing being shown. */
+  color: inherit;
+}
+.swatch figcaption span {
+  display: block;
+  opacity: .62;
+  font-size: .6875rem;
+  word-break: break-all;
+}
+
 /* --- footer -------------------------------------------------------------- */
 
 footer {
@@ -439,9 +480,7 @@ footer p { margin: 0; }
       </p>
 
       <div class="install">
-        <pre><code>git clone https://github.com/lariocpt/color-terminal.git
-cd color-terminal
-./install.sh</code></pre>
+        <pre><code>curl -fsSL https://lariocpt.github.io/color-terminal/install.sh | sh</code></pre>
         <button type="button" class="copy" id="copy" hidden>copy</button>
       </div>
     </section>
@@ -450,7 +489,7 @@ cd color-terminal
       <h2>Making it stop</h2>
       <p>
         A tool that recolours your terminal without being asked owes you a brake.
-        There are four, from “not right now” to “gone”.
+        There are five, from “not right now” to “gone”.
       </p>
       <div class="brake">
         <dl>
@@ -472,10 +511,17 @@ cd color-terminal
             that host stops rolling the dice, on every shell, including over ssh.
           </dd>
 
-          <dt><code>ct-setup unwire</code></dt>
+          <dt><code>trigger = manual</code></dt>
           <dd>
-            Full removal. Unhooks the shell rc files, restores the config files it
-            replaced, and leaves your own colours exactly as it found them.
+            Keep it installed but never automatic: colours change only when you run
+            <code>color-terminal</code> yourself.
+          </dd>
+
+          <dt><code>color-terminal --uninstall</code></dt>
+          <dd>
+            Full removal. Takes out the shell hooks, the include line it added to your
+            terminal’s config, and the binary. Your own <code>theme =</code> line was
+            never touched, so there is nothing to put back.
           </dd>
         </dl>
       </div>
@@ -522,15 +568,192 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
          ================================================================== -->
 
     <!-- ct:generated:triggers BEGIN -->
-    <!-- slot: what actually triggers a recolour, and what suppresses one -->
+    <section id="triggers">
+      <h2>When the colours change</h2>
+      <p>
+        Set <code>trigger</code> in <code>~/.config/color-terminal/config</code>.
+      </p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>value</th><th>what fires a new colour</th></tr></thead>
+          <tbody>
+            <tr><td><code>pane</code> <em>(default)</em></td>
+                <td>the first shell in each new pane or window</td></tr>
+            <tr><td><code>shell</code></td>
+                <td>every interactive shell</td></tr>
+            <tr><td><code>manual</code></td>
+                <td>only when you run <code>color-terminal</code> yourself</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        <code>pane</code> is the default because it is the only one that matches what
+        you actually mean by &ldquo;a terminal&rdquo;. A shell cannot see its window,
+        but it can see its <em>session</em>: every nested shell in one pane shares a
+        session id, and a new pane gets a new one. Without that,
+        <code>su</code>, <code>:!sh</code> from vim, <code>poetry shell</code> and every
+        coding-agent subshell would re-randomise the window while you are typing in it.
+      </p>
+    </section>
     <!-- ct:generated:triggers END -->
 
     <!-- ct:generated:support BEGIN -->
-    <!-- slot: terminal support table, generated from the probe results -->
+    <section id="support">
+      <h2>Which terminals</h2>
+      <p>
+        There are three tiers, and the third one is a feature rather than a gap.
+      </p>
+      <div class="scroller">
+        <table>
+          <thead><tr><th>tier</th><th>what happens</th><th>which</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><strong>1</strong></td>
+              <td>live recolour, plus a palette file so new windows keep the theme</td>
+              <td><code>ghostty</code>, <code>foot</code></td>
+            </tr>
+            <tr>
+              <td><strong>2</strong></td>
+              <td>live recolour, no config written &mdash; one shared backend, no
+                  per-terminal code</td>
+              <td><code>kitty</code>, <code>alacritty</code>, <code>wezterm</code>,
+                  <code>xterm</code>, <code>urxvt</code>, <code>st</code>,
+                  <code>rio</code>, <code>contour</code>, iTerm2, Windows Terminal,
+                  VS Code, the whole VTE family &mdash; <strong>and any terminal we
+                  have never heard of, and any ssh session</strong></td>
+            </tr>
+            <tr>
+              <td><strong>3</strong></td>
+              <td>detected, declined, and told why</td>
+              <td>konsole, Warp, mosh, Apple Terminal</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p>
+        Tier 2 is the point: unknown is a supported case, not an error. The sequences it
+        uses are implemented by every terminal in both tiers, so nothing has to be
+        probed or negotiated first.
+      </p>
+      <p>
+        Tier 3 is declined on purpose, because emitting into those is worse than doing
+        nothing &mdash; it <em>looks</em> like it worked. konsole parses the palette
+        sequence, stores it, answers queries about it, and never renders with it; Warp
+        ignores it; mosh drops it; Apple Terminal has no palette sequence at all.
+        Run <code>color-terminal --doctor</code> to see which one you are in.
+      </p>
+    </section>
     <!-- ct:generated:support END -->
 
     <!-- ct:generated:gallery BEGIN -->
-    <!-- slot: theme gallery, generated from themes/*.theme -->
+    <section id="themes">
+      <h2>The corpus</h2>
+      <p>
+        24 themes ship with the tool &mdash; 16 dark, 8 light.
+        Every one of them clears a contrast gate enforced at build time, so a random
+        pick can never hand you an unreadable terminal. Drop your own into
+        <code>~/.config/color-terminal/themes/</code>; that directory is searched first
+        and an upgrade never touches it.
+      </p>
+      <div class="gallery">
+          <figure class="swatch" style="background:#f7f7f7;color:#000000">
+            <div class="chips"><i style="background:#aa3731"></i><i style="background:#448c27"></i><i style="background:#cb9000"></i><i style="background:#325cc0"></i><i style="background:#7a3e9d"></i><i style="background:#0083b2"></i></div>
+            <figcaption>Alabaster<span>alabaster</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#21252b;color:#abb2bf">
+            <div class="chips"><i style="background:#e06c75"></i><i style="background:#98c379"></i><i style="background:#e5c07b"></i><i style="background:#61afef"></i><i style="background:#c678dd"></i><i style="background:#56b6c2"></i></div>
+            <figcaption>Atom One Dark<span>atom-one-dark</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#1f2430;color:#cccac2">
+            <div class="chips"><i style="background:#ed8274"></i><i style="background:#87d96c"></i><i style="background:#facc6e"></i><i style="background:#6dcbfa"></i><i style="background:#dabafa"></i><i style="background:#90e1c6"></i></div>
+            <figcaption>Ayu Mirage<span>ayu-mirage</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#1e1e2e;color:#cdd6f4">
+            <div class="chips"><i style="background:#f38ba8"></i><i style="background:#a6e3a1"></i><i style="background:#f9e2af"></i><i style="background:#89b4fa"></i><i style="background:#f5c2e7"></i><i style="background:#94e2d5"></i></div>
+            <figcaption>Catppuccin Mocha<span>catppuccin-mocha</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#282a36;color:#f8f8f2">
+            <div class="chips"><i style="background:#ff5555"></i><i style="background:#50fa7b"></i><i style="background:#f1fa8c"></i><i style="background:#bd93f9"></i><i style="background:#ff79c6"></i><i style="background:#8be9fd"></i></div>
+            <figcaption>Dracula<span>dracula</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#1e2326;color:#d3c6aa">
+            <div class="chips"><i style="background:#e67e80"></i><i style="background:#a7c080"></i><i style="background:#dbbc7f"></i><i style="background:#7fbbb3"></i><i style="background:#d699b6"></i><i style="background:#83c092"></i></div>
+            <figcaption>Everforest Dark Hard<span>everforest-dark</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#fffcf0;color:#100f0f">
+            <div class="chips"><i style="background:#af3029"></i><i style="background:#66800b"></i><i style="background:#ad8301"></i><i style="background:#205ea6"></i><i style="background:#a02f6f"></i><i style="background:#24837b"></i></div>
+            <figcaption>Flexoki Light<span>flexoki-light</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#0d1117;color:#e6edf3">
+            <div class="chips"><i style="background:#ff7b72"></i><i style="background:#3fb950"></i><i style="background:#d29922"></i><i style="background:#58a6ff"></i><i style="background:#bc8cff"></i><i style="background:#39c5cf"></i></div>
+            <figcaption>GitHub Dark Default<span>github-dark</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#ffffff;color:#1f2328">
+            <div class="chips"><i style="background:#cf222e"></i><i style="background:#116329"></i><i style="background:#4d2d00"></i><i style="background:#0969da"></i><i style="background:#8250df"></i><i style="background:#1b7c83"></i></div>
+            <figcaption>GitHub Light Default<span>github-light</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#282828;color:#d4be98">
+            <div class="chips"><i style="background:#ea6962"></i><i style="background:#a9b665"></i><i style="background:#d8a657"></i><i style="background:#7daea3"></i><i style="background:#d3869b"></i><i style="background:#89b482"></i></div>
+            <figcaption>Gruvbox Material Dark<span>gruvbox-material-dark</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#fbf1c7;color:#654735">
+            <div class="chips"><i style="background:#c14a4a"></i><i style="background:#6c782e"></i><i style="background:#b47109"></i><i style="background:#45707a"></i><i style="background:#945e80"></i><i style="background:#4c7a5d"></i></div>
+            <figcaption>Gruvbox Material Light<span>gruvbox-material-light</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#f2ecbc;color:#545464">
+            <div class="chips"><i style="background:#c84053"></i><i style="background:#6f894e"></i><i style="background:#77713f"></i><i style="background:#4d699b"></i><i style="background:#b35b79"></i><i style="background:#597b75"></i></div>
+            <figcaption>Kanagawa Lotus<span>kanagawa-lotus</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#1f1f28;color:#dcd7ba">
+            <div class="chips"><i style="background:#c34043"></i><i style="background:#76946a"></i><i style="background:#c0a36e"></i><i style="background:#7e9cd8"></i><i style="background:#957fb8"></i><i style="background:#6a9589"></i></div>
+            <figcaption>Kanagawa Wave<span>kanagawa-wave</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#f8efe7;color:#2c232e">
+            <div class="chips"><i style="background:#ce4770"></i><i style="background:#218871"></i><i style="background:#b16803"></i><i style="background:#d4572b"></i><i style="background:#6851a2"></i><i style="background:#2473b6"></i></div>
+            <figcaption>Monokai Pro Light Sun<span>monokai-pro-light</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#2d2a2e;color:#fcfcfa">
+            <div class="chips"><i style="background:#ff6188"></i><i style="background:#a9dc76"></i><i style="background:#ffd866"></i><i style="background:#fc9867"></i><i style="background:#ab9df2"></i><i style="background:#78dce8"></i></div>
+            <figcaption>Monokai Pro<span>monokai-pro</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#011627;color:#d6deeb">
+            <div class="chips"><i style="background:#ef5350"></i><i style="background:#22da6e"></i><i style="background:#addb67"></i><i style="background:#82aaff"></i><i style="background:#c792ea"></i><i style="background:#21c7a8"></i></div>
+            <figcaption>Night Owl<span>night-owl</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#2e3440;color:#d8dee9">
+            <div class="chips"><i style="background:#bf616a"></i><i style="background:#a3be8c"></i><i style="background:#ebcb8b"></i><i style="background:#81a1c1"></i><i style="background:#b48ead"></i><i style="background:#88c0d0"></i></div>
+            <figcaption>Nord<span>nord</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#f7f8fa;color:#2e3440">
+            <div class="chips"><i style="background:#cb4f53"></i><i style="background:#48a53d"></i><i style="background:#ee5e25"></i><i style="background:#3879c5"></i><i style="background:#9f4aca"></i><i style="background:#3ea1ad"></i></div>
+            <figcaption>Onenord Light<span>onenord-light</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#2e3440;color:#e5e9f0">
+            <div class="chips"><i style="background:#e06c75"></i><i style="background:#9ec183"></i><i style="background:#ebcb8b"></i><i style="background:#81a1c1"></i><i style="background:#b988b0"></i><i style="background:#88c0d0"></i></div>
+            <figcaption>Onenord<span>onenord</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#161616;color:#f2f4f8">
+            <div class="chips"><i style="background:#00dfdb"></i><i style="background:#00b4ff"></i><i style="background:#ff4297"></i><i style="background:#00c15a"></i><i style="background:#c693ff"></i><i style="background:#ff74b8"></i></div>
+            <figcaption>Oxocarbon<span>oxocarbon</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#232136;color:#e0def4">
+            <div class="chips"><i style="background:#eb6f92"></i><i style="background:#3e8fb0"></i><i style="background:#f6c177"></i><i style="background:#9ccfd8"></i><i style="background:#c4a7e7"></i><i style="background:#ea9a97"></i></div>
+            <figcaption>Rosé Pine Moon<span>rose-pine-moon</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#002b36;color:#839496">
+            <div class="chips"><i style="background:#dc322f"></i><i style="background:#859900"></i><i style="background:#b58900"></i><i style="background:#268bd2"></i><i style="background:#d33682"></i><i style="background:#2aa198"></i></div>
+            <figcaption>Solarized Dark<span>solarized-dark</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#e1e2e7;color:#3760bf">
+            <div class="chips"><i style="background:#f52a65"></i><i style="background:#587539"></i><i style="background:#8c6c3e"></i><i style="background:#2e7de9"></i><i style="background:#9854f1"></i><i style="background:#007197"></i></div>
+            <figcaption>TokyoNight Day<span>tokyonight-day</span></figcaption>
+          </figure>
+          <figure class="swatch" style="background:#24283b;color:#c0caf5">
+            <div class="chips"><i style="background:#f7768e"></i><i style="background:#9ece6a"></i><i style="background:#e0af68"></i><i style="background:#7aa2f7"></i><i style="background:#bb9af7"></i><i style="background:#7dcfff"></i></div>
+            <figcaption>TokyoNight Storm<span>tokyonight-storm</span></figcaption>
+          </figure>
+      </div>
+    </section>
     <!-- ct:generated:gallery END -->
 
   </main>
@@ -538,8 +761,15 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
   <footer>
     <p>
       color-terminal ·
-      <a href="https://github.com/lariocpt/color-terminal">source on GitHub</a> ·
-      themes carry their upstream authorship and licence in the theme file itself
+      <a href="https://github.com/lariocpt/color-terminal">source</a> ·
+      <a href="https://github.com/lariocpt/color-terminal/releases/latest">latest release</a> ·
+      <a href="https://github.com/lariocpt/color-terminal/blob/main/CHANGELOG.md">changelog</a> ·
+      <a href="https://github.com/lariocpt/color-terminal/blob/main/LICENSE">MIT</a>
+    </p>
+    <p>
+      Themes carry their upstream authorship and licence in the theme file itself; see
+      <a href="https://github.com/lariocpt/color-terminal/blob/main/CREDITS.md">CREDITS</a>.
+      The installer above verifies a published sha256 before it writes anything.
     </p>
   </footer>
 

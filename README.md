@@ -1,28 +1,42 @@
 # color-terminal
 
+[![ci](https://github.com/lariocpt/color-terminal/actions/workflows/ci.yml/badge.svg)](https://github.com/lariocpt/color-terminal/actions/workflows/ci.yml)
+[![latest release](https://img.shields.io/github/v/release/lariocpt/color-terminal?sort=semver)](https://github.com/lariocpt/color-terminal/releases/latest)
+[![licence: MIT](https://img.shields.io/badge/licence-MIT-blue)](LICENSE)
+
 Recolors the terminal you are typing in. Every new terminal pane picks a theme from a
 bundled corpus and applies it live, over ssh included.
 
 ```sh
-curl -fsSL https://apps.in.drlario.org/install.sh | bash -s -- color-terminal
-color-terminal --install
+curl -fsSL https://lariocpt.github.io/color-terminal/install.sh | sh
 ```
 
-That is the way every machine on the estate should get it — the same apps plane that
-serves `opn`, `crust`, `sleepless` and `niri-spaces`. From a checkout, `./install.sh`
-does the same thing. From nothing at all:
+That downloads one file, checks it against the sha256 published with the release, and
+lets it install itself. Open a new window and you are done. To stop it: `NO_COLOR=1`,
+`COLOR_TERMINAL=0`, or `color-terminal --uninstall`.
+
+[**Website**](https://lariocpt.github.io/color-terminal/) ·
+[**Changelog**](CHANGELOG.md) ·
+[**Theme credits**](CREDITS.md)
+
+### Other ways in
 
 ```sh
+# from a checkout
+git clone https://github.com/lariocpt/color-terminal.git && cd color-terminal && ./install.sh
+
+# onto a host with nothing on it
 scp dist/color-terminal remote: && ssh remote ./color-terminal --install
 ```
 
 All three run identical code, because the installer lives *inside* the artifact. The
-published file is one ~88 KB bash script with the 24 themes and both shell-hook
+published file is one ~90 KB bash script with the 24 themes and both shell-hook
 templates appended after its final `exit` — bash never parses past that, so the payload
 costs nothing at shell start and `--install` reads the file's own tail to unpack it.
 
-Open a new window. To stop it: `NO_COLOR=1`, `COLOR_TERMINAL=0`, or
-`color-terminal --uninstall`.
+**Requirements:** `bash` 4.0+ (3.2 works, but see below), plus `curl` or `wget` and one
+of `sha256sum`/`shasum`/`openssl` for the installer. No runtime dependencies beyond
+bash itself — no python, no package manager, nothing to keep updated.
 
 ## How it works
 
@@ -46,15 +60,20 @@ Escapes go to `/dev/tty` and never to stdout — a stray escape byte on stdout c
 ## Which terminals
 
 **Tier 1** — live recolor, plus a palette file so new windows keep the theme:
-`ghostty`, `foot`. (`kitty` and `alacritty` are phase 2.)
+`ghostty`, `foot`.
 
 **Tier 2** — live recolor, no config written. One shared `generic` backend, no
-per-terminal code: `wezterm`, `xterm`, `urxvt`, `st`, `rio`, `contour`, `iTerm2`,
-Windows Terminal, VS Code, the whole VTE family (gnome-terminal, ptyxis, tilix,
-terminator, xfce4-terminal, guake, blackbox) — **and any terminal we have never heard
-of, and any ssh session**. That last part is the point: unknown is a supported case,
-not an error. The sequences tier 2 uses are implemented by every terminal in both
-tiers, so no probing or handshake is needed.
+per-terminal code: `kitty`, `alacritty`, `wezterm`, `xterm`, `urxvt`, `st`, `rio`,
+`contour`, `iTerm2`, Windows Terminal, VS Code, the whole VTE family (gnome-terminal,
+ptyxis, tilix, terminator, xfce4-terminal, guake, blackbox) — **and any terminal we
+have never heard of, and any ssh session**. That last part is the point: unknown is a
+supported case, not an error. The sequences tier 2 uses are implemented by every
+terminal in both tiers, so no probing or handshake is needed.
+
+`kitty`, `alacritty` and `xterm` are verified through that shared backend by
+`make test-terminals`, which runs them for real in a container and asks each one back
+what color it is now using. They have no per-terminal code, which is the evidence for
+the claim above.
 
 **Tier 3** — detected, declined, and told why. Emitting into these is worse than doing
 nothing because it *looks* like it worked: konsole parses OSC 4, stores it, answers
@@ -92,10 +111,21 @@ at:
 Your own `theme =` line is left exactly as you wrote it, including the
 `theme = light:X,dark:Y` form.
 
-Because included files win, the fragment sets the palette for windows opened later.
-It holds the **next** theme rather than the current one, so a new window opens already
+Because included files win, the fragment sets the palette for windows opened later. It
+holds the **next** theme rather than the current one, so a new window opens already
 wearing what its shell hook is about to apply — otherwise every new window would show
 the previous theme and visibly swap a moment later.
+
+## Where things go
+
+| path | what |
+|---|---|
+| `~/.local/bin/color-terminal` | the one file that is the whole tool |
+| `~/.config/color-terminal/config` | yours to edit; never overwritten on upgrade |
+| `~/.config/color-terminal/themes/` | your own themes; searched first, never touched |
+| `~/.config/color-terminal/hook.{zsh,bash}` | generated, sourced from your rc |
+| `~/.local/share/color-terminal/themes/` | the bundled corpus; replaced on upgrade |
+| `~/.local/state/color-terminal/` | pick history |
 
 ## Themes
 
@@ -113,17 +143,18 @@ color0 = #45475a
 color15 = #bac2de
 ```
 
-`colorN` is named that way because N is the OSC 4 palette index used verbatim.
-Drop your own into `~/.config/color-terminal/themes/`; that directory is searched
-first and an upgrade never touches it.
+`colorN` is named that way because N is the OSC 4 palette index used verbatim. Drop
+your own into `~/.config/color-terminal/themes/`; that directory is searched first and
+an upgrade never touches it.
 
 Every theme passes a contrast gate enforced at build time by
 `tools/validate-themes.py`: foreground/background ≥ 4.5:1, red (errors) ≥ 3.0:1,
-green/blue/magenta/cyan ≥ 2.8:1, yellow ≥ 2.0:1. Yellow has a lower bar because
-yellow on a light background is poor in essentially every published theme corpus — a
-flat 3.0 bar leaves 2 usable light themes out of 44 that otherwise pass.
+green/blue/magenta/cyan ≥ 2.8:1, yellow ≥ 2.0:1. Yellow has a lower bar because yellow
+on a light background is poor in essentially every published theme corpus — a flat 3.0
+bar leaves 2 usable light themes out of 44 that otherwise pass.
 
-`color-terminal --list` shows what is installed.
+`color-terminal --list` shows what is installed. Every bundled theme is shown on the
+[website](https://lariocpt.github.io/color-terminal/#themes).
 
 ## Turning it off
 
@@ -133,7 +164,7 @@ flat 3.0 bar leaves 2 usable light themes out of 44 that otherwise pass.
 | `COLOR_TERMINAL=0` | per-shell or per-session off switch |
 | `~/.config/color-terminal/hosts/<hostname>` | pin one machine to one theme forever |
 | `trigger = manual` | never automatic |
-| `./install.sh --uninstall` | removes the hook, the include line, and the binary |
+| `color-terminal --uninstall` | removes the hook, the include line, and the binary |
 
 ## Splashboard
 
@@ -143,23 +174,41 @@ splash animation and the terminal agree. 16 of the 24 themes map to an exact pre
 the rest write `reset` tokens, which make the splash inherit the colors just applied.
 Skipped entirely over ssh — the splash is a local artifact.
 
-## Development
+## Verifying a download
+
+Every release publishes `SHA256SUMS` beside the artifact, and the installer checks it
+before writing anything. The build is reproducible, so you can also check it yourself:
+
+```sh
+git checkout v2.0.0 && make dist && sha256sum dist/color-terminal
+curl -fsSL https://github.com/lariocpt/color-terminal/releases/download/v2.0.0/SHA256SUMS
+```
+
+The two must agree. The payload tar is built with normalised mtimes, ownership and
+sort order precisely so that this comparison means something.
+
+## Contributing
+
+`AGENTS.md` is the working guide: what is load-bearing, what will bite you, and how to
+add a terminal. Bug reports and questions go in
+[issues](https://github.com/lariocpt/color-terminal/issues); a `--doctor` dump is the
+single most useful thing to include.
 
 ```sh
 make dist              # amalgamate lib/*.sh into ONE self-installing file
 make lint              # syntax + shellcheck + theme validation
 make test              # unit, pty-level escape assertions, concurrency, latency
 make test-terminals    # real terminals in podman, headless
+make test-live         # real windows in whatever is installed here
+make docs              # regenerate the website's generated sections
 make golden            # regenerate the expected render output
 make themes            # rebuild the corpus from ghostty's, via tools/import-scheme.sh
 ```
 
 `lib/*.sh` is source-only and never installed. `make dist` concatenates it into one
 self-contained script and appends the themes and hook templates as a payload, which is
-how it stays `scp`-able to a bare host, how it avoids fifteen `open()` calls at every
-shell start, and how it fits the apps plane's one-raw-binary-per-tool contract.
-`Jenkinsfile` publishes it on every push to main; the gate is the full test suite, so a
-red run never reaches `/srv/apps`.
+how it stays `scp`-able to a bare host and how it avoids fifteen `open()` calls at
+every shell start.
 
 Adding a terminal is one file in `lib/backends/` implementing six functions, plus one
 line in `CT_BACKENDS`; see the contract at the top of `lib/backend.sh`.
@@ -171,4 +220,17 @@ terminals in podman and currently verifies **foot, kitty, alacritty and xterm** 
 asking each one back what colour it is now using; kitty is cross-checked against
 `kitten @ get-colors` as an independent second oracle.
 
-Budget: a full swap costs ~20 ms and a nested-shell no-op ~8 ms, both asserted in CI.
+Budget: a full swap costs ~10 ms and a nested-shell no-op ~4 ms, both asserted in CI.
+
+### bash 3.2
+
+The tool targets bash 3.2 because that is still `/bin/bash` on macOS. If you touch
+`lib/`, avoid negative array subscripts, associative arrays and `${var^^}` — none of
+them exist there, and the failure mode is silent rather than loud.
+
+### LAN mirror
+
+Machines on the author's own network install from an internal mirror at
+`apps.in.drlario.org` instead, which serves byte-identical copies of the published
+release. `--source=apps` on the installer selects it. It is a cache, not a second
+source of truth; nothing about it is required to use this project.

@@ -1,3 +1,7 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
+# shellcheck disable=SC2034,SC1007
 # theme.sh — load one theme file into the CT_* globals the emitter and the backends
 # read. Themes are DATA: parsed with the shared flat parser, never sourced. People
 # paste theme files from gists, and a sourced theme file is arbitrary code execution.

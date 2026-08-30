@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # emit.sh — the ONLY place in color-terminal that writes an escape byte.
 #
 # Everything is emitted on fd 3, which is /dev/tty, never on stdout. stdout may be a

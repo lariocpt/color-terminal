@@ -11,11 +11,33 @@ Launched by test/live/run.sh, which opens a real window per terminal.
 import os, sys, termios, tty, select, subprocess, re
 
 OUT = sys.argv[1]
-THEME_BG = "#1e1e2e"      # catppuccin-mocha background
-THEME_C1 = "#f38ba8"      # catppuccin-mocha color1
+THEME = "catppuccin-mocha"
+
+# Read the expected colours out of the corpus rather than hardcoding them. The
+# container layer already does this; hardcoding here meant a retuned theme would leave
+# this oracle asserting a colour the tool no longer ships — a test that fails for the
+# wrong reason, or worse, passes for one.
+_REPO = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+_THEME_FILE = os.path.join(_REPO, "themes", THEME + ".theme")
+
+
+def _theme_colour(key):
+    with open(_THEME_FILE) as fh:
+        for line in fh:
+            line = line.strip()
+            if line.startswith("#") or "=" not in line:
+                continue
+            k, v = line.split("=", 1)
+            if k.strip() == key:
+                return v.strip()
+    sys.exit("probe: %s has no '%s'" % (_THEME_FILE, key))
+
+
+THEME_BG = _theme_colour("background")
+THEME_C1 = _theme_colour("color1")
 
 CT = os.environ.get("CT_BIN", os.path.expanduser("~/.local/bin/color-terminal"))
-subprocess.run([CT, "--theme", "catppuccin-mocha"], check=False)
+subprocess.run([CT, "--theme", THEME], check=False)
 
 fd = sys.stdin.fileno()
 saved = termios.tcgetattr(fd)

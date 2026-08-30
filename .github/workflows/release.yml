@@ -1,0 +1,190 @@
+name: release
+
+# Tag-driven, not `release: published`. With a release trigger the release already
+# exists and is already `latest` before a single test has run, so a red gate cannot
+# un-publish it. A tag push means the only thing that exists until the gate is green
+# is the tag.
+#
+# NOTE: ci.yml fires on push-to-main and pull_request — neither of which a tag push
+# triggers. So the full gate is repeated here on purpose: without it, the one path
+# that reaches the public would be the one path with no tests in front of it.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to (re)publish, e.g. v2.0.0'
+        required: true
+
+permissions: {}
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write            # the only elevated scope, and only in this job
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+      ASSET: color-terminal
+    steps:
+      - name: Resolve the tag
+        id: t
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -eu
+          tag="${INPUT_TAG:-${GITHUB_REF#refs/tags/}}"
+          case "$tag" in
+            v[0-9]*) ;;
+            *) echo "::error::'$tag' is not a vX.Y.Z release tag"; exit 1 ;;
+          esac
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@v5
+        with:
+          ref: refs/tags/${{ steps.t.outputs.tag }}
+          persist-credentials: false
+
+      # CT_VERSION in lib/common.sh is the only version string in the project. If it
+      # and the tag disagree, the published artifact lies about itself: the release
+      # page, `color-terminal --version` and the LAN mirror would print three
+      # different numbers for one set of bytes.
+      - name: Assert the tag matches CT_VERSION
+        id: v
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -eu
+          v=$(sed -n 's/^CT_VERSION=\(.*\)$/\1/p' lib/common.sh | head -1)
+          [ -n "$v" ] || { echo "::error::could not parse CT_VERSION from lib/common.sh"; exit 1; }
+          base=${TAG#v}; base=${base%%-*}       # v2.1.0-rc.1 -> 2.1.0
+          [ "$base" = "$v" ] || {
+            echo "::error file=lib/common.sh,line=10::tag $TAG claims $base, lib/common.sh says CT_VERSION=$v"
+            exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      # The release notes are the changelog section, so a missing section is a missing
+      # release page. Failing here beats publishing an empty one.
+      - name: Release notes must exist
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -eu
+          # Literal prefix match, not a regex: the heading contains [ and ], and getting
+          # those through a shell string into an awk dynamic regex intact is a trap that
+          # silently matches nothing and ships an empty release page.
+          awk -v want="## [${TAG#v}]" 'index($0, want) == 1 {found = 1} END {exit !found}' CHANGELOG.md \
+            || { echo "::error file=CHANGELOG.md::no '## [${TAG#v}]' section for $TAG"; exit 1; }
+
+      - name: Install deps
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y shellcheck dash
+
+      - name: Lint (syntax + shellcheck + theme contrast gate)
+        run: make lint
+
+      - name: Build the artifact and its checksum
+        run: |
+          set -eu
+          make dist
+          # Generated from INSIDE dist/ so the file names the artifact 'color-terminal'
+          # with no directory component. `sha256sum -c` reads the filename out of this
+          # file, so 'dist/color-terminal' would force every downloader to recreate a
+          # dist/ directory to check it.
+          ( cd dist && sha256sum "$ASSET" > SHA256SUMS && sha256sum -c SHA256SUMS )
+          cat dist/SHA256SUMS
+
+      - name: Test (pty escapes, detection matrix, concurrency, latency, self-install)
+        run: ./test/run.sh
+
+      - name: The artifact must report the tagged version
+        run: |
+          set -eu
+          got=$(dist/color-terminal --version | tr -d '\r')
+          want="color-terminal ${{ steps.v.outputs.version }}"
+          [ "$got" = "$want" ] || { echo "::error::artifact says '$got', expected '$want'"; exit 1; }
+
+      # Draft first, un-draft last. `gh release create <tag> <files>` creates the
+      # release and THEN uploads: for those seconds the release exists, is already
+      # `latest`, and its assets 404 — so every install one-liner in flight fails.
+      # A draft is excluded from `latest` and its assets are not downloadable, which
+      # makes flipping the draft bit the atomic step.
+      - name: Publish
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -eu
+          notes=$(mktemp)
+          awk -v want="## [${TAG#v}]" '
+            index($0, want) == 1 { f = 1; next }
+            f && index($0, "## [") == 1 { exit }
+            f { print }
+          ' CHANGELOG.md > "$notes"
+          [ -s "$notes" ] || { echo "::error::extracted empty release notes for $TAG"; exit 1; }
+          {
+            printf '\n### Install\n\n'
+            printf '```sh\ncurl -fsSL https://lariocpt.github.io/color-terminal/install.sh | sh\n```\n\n'
+            printf 'The installer verifies this checksum before it writes anything:\n\n```\n%s\n```\n' \
+                   "$(cat dist/SHA256SUMS)"
+          } >> "$notes"
+
+          pre=''
+          case "$TAG" in *-*) pre='--prerelease' ;; esac
+
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/"$ASSET" dist/SHA256SUMS --clobber
+          else
+            # shellcheck disable=SC2086
+            gh release create "$TAG" dist/"$ASSET" dist/SHA256SUMS \
+              --draft --verify-tag \
+              --title "color-terminal ${TAG#v}" \
+              --notes-file "$notes" $pre
+          fi
+
+          if [ -n "$pre" ]; then
+            gh release edit "$TAG" --draft=false
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
+
+      # Download what a stranger downloads. This is the only step that proves the
+      # PUBLISHED bytes work, rather than the local build that produced them.
+      - name: Smoke-test the published assets
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          set -eu
+          d=$(mktemp -d); mkdir -p "$d/home" "$d/run"
+          gh release download "$TAG" --dir "$d" --pattern "$ASSET" --pattern SHA256SUMS
+          ( cd "$d" && sha256sum -c SHA256SUMS )
+          # Release assets arrive without the executable bit — a real trap for anything
+          # downstream that assumes otherwise.
+          chmod +x "$d/$ASSET"
+          HOME="$d/home" XDG_RUNTIME_DIR="$d/run" CT_QUIET=1 \
+            "$d/$ASSET" --install --no-wire >/dev/null
+          n=$(ls "$d/home/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+          [ "$n" -eq 24 ] || { echo "::error::published asset installed $n themes, expected 24"; exit 1; }
+
+      # The exact URL docs/install.sh resolves, fetched with no credentials the way a
+      # stranger's curl does. It only exists for a public repo and a non-prerelease.
+      - name: The public install path resolves end to end
+        if: ${{ github.event.repository.private == false && !contains(steps.t.outputs.tag, '-') }}
+        run: |
+          set -eu
+          d=$(mktemp -d); mkdir -p "$d/home" "$d/run"
+          base="https://github.com/$GH_REPO/releases/latest/download"
+          for f in "$ASSET" SHA256SUMS; do
+            curl -fsSL --retry 5 --retry-all-errors --proto '=https' -o "$d/$f" "$base/$f"
+          done
+          ( cd "$d" && sha256sum -c SHA256SUMS )
+          HOME="$d/home" XDG_RUNTIME_DIR="$d/run" PREFIX="$d/home/.local" CT_QUIET=1 \
+            sh docs/install.sh --no-wire
+          "$d/home/.local/bin/$ASSET" --version

@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# shellcheck disable=SC2034
 # config.sh — the user's answers, as flat key = value.
 #
 # PARSED, NEVER SOURCED. Sourcing a config file makes every key an arbitrary code

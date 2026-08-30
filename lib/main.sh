@@ -1,3 +1,9 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
+# SC1090: the source path is built at runtime.
+# shellcheck disable=SC2034,SC2154,SC1007,SC1090
 # main.sh — argument handling and the one flow everything else serves.
 
 ct_usage() {

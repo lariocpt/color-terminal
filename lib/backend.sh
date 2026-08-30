@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# shellcheck disable=SC2034
 # backend.sh — the terminal backend registry and the operations the core drives.
 #
 # A backend is one file, lib/backends/<id>.sh, defining functions prefixed

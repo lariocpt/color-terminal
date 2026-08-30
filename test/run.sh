@@ -20,6 +20,14 @@ FAILED=()
 # Every test runs against a throwaway HOME. This guard is not paranoia: v1 wrote to
 # five real dotfiles, and a test that leaks would rewrite the developer's own ~/.zshrc
 # and ghostty config.
+#
+# Isolating HOME is not enough on its own. ct_paths_init honours the whole XDG set, so
+# an ambient XDG_CONFIG_HOME sends config, hooks and host pins somewhere the sandbox
+# does not reach — and if it holds its conventional value, "somewhere" is the
+# developer's own ~/.config/color-terminal. GitHub's runners export XDG_CONFIG_HOME,
+# which is how this surfaced. XDG_RUNTIME_DIR is exempt: each test sets it per-home.
+unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_STATE_HOME XDG_CACHE_HOME
+
 SANDBOX="$(mktemp -d "${TMPDIR:-/tmp}/color-terminal-test.XXXXXX")"
 trap 'rm -rf "$SANDBOX"' EXIT
 case "$SANDBOX" in /tmp/*|/var/folders/*|"${TMPDIR%/}"/*) ;; *) echo "refusing to run: sandbox $SANDBOX is not under a temp dir" >&2; exit 1 ;; esac
@@ -280,6 +288,55 @@ if [ ! -e "$ISO/.local/bin/color-terminal" ] && ! grep -q 'color-terminal hook' 
 else
     nope "--uninstall is complete"
 fi
+
+section "public installer — the headline install command"
+
+# docs/install.sh is what `curl … | sh` runs, so it is part of the product and gets
+# tested like the rest of it. A local file:// release stands in for GitHub: same
+# SHA256SUMS format, same asset name, same code path.
+newhome
+REL="$SANDBOX/release$RANDOM"; mkdir -p "$REL"
+cp "$REPO/dist/color-terminal" "$REL/color-terminal"
+( cd "$REL" && sha256sum color-terminal > SHA256SUMS )
+
+out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" PREFIX="$H/.local" CT_QUIET=1 \
+      COLOR_TERMINAL_DOWNLOAD_BASE="file://$REL" \
+      sh "$REPO/docs/install.sh" --no-wire 2>&1) || true
+
+if [ -x "$H/.local/bin/color-terminal" ]; then ok "installer: fetches, verifies and installs the artifact"
+else nope "installer: installs the artifact" "$out"; fi
+
+n=$(ls "$H/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+is "installer: hands over to --install, which unpacks the payload" "$n" "24"
+
+# The check that matters. A corrupted download must not become executable anywhere,
+# and the installer must say so rather than installing something that half works.
+newhome
+BAD="$SANDBOX/bad$RANDOM"; mkdir -p "$BAD"
+cp "$REPO/dist/color-terminal" "$BAD/color-terminal"
+( cd "$BAD" && sha256sum color-terminal > SHA256SUMS )
+printf 'x' >> "$BAD/color-terminal"           # one byte, after the checksum was taken
+
+out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" PREFIX="$H/.local" \
+      COLOR_TERMINAL_DOWNLOAD_BASE="file://$BAD" \
+      sh "$REPO/docs/install.sh" --no-wire 2>&1); rc=$?
+is   "installer: a tampered artifact is refused"        "$rc" "1"
+has  "installer: and says why"                          "$out" "CHECKSUM MISMATCH"
+if [ ! -e "$H/.local/bin/color-terminal" ]; then ok "installer: nothing executable is left behind"
+else nope "installer: nothing executable is left behind" "$H/.local/bin/color-terminal exists"; fi
+
+# SHA256SUMS is matched by asset name, not positionally, so a release that later grows
+# a second asset does not break installers already in the wild.
+newhome
+MULTI="$SANDBOX/multi$RANDOM"; mkdir -p "$MULTI"
+cp "$REPO/dist/color-terminal" "$MULTI/color-terminal"
+echo 'unrelated' > "$MULTI/some-other-asset"
+( cd "$MULTI" && sha256sum some-other-asset color-terminal > SHA256SUMS )
+out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" CT_QUIET=1 \
+      COLOR_TERMINAL_DOWNLOAD_BASE="file://$MULTI" \
+      sh "$REPO/docs/install.sh" --download-only="$H/ct" 2>&1) || true
+if [ -x "$H/ct" ]; then ok "installer: --download-only verifies against a multi-asset SHA256SUMS"
+else nope "installer: --download-only with extra assets" "$out"; fi
 
 section "golden — rendered config fragments"
 

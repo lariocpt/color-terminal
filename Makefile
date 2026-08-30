@@ -37,10 +37,15 @@ $(DIST): $(LIBS)
 	@# Everything the tool needs at runtime rides inside this one file. It is appended
 	@# AFTER the final `exit`, so bash never parses it and it costs nothing at shell
 	@# start; --install reads the file's own tail to get it back. This is what keeps
-	@# `scp color-terminal remote:` a working install, and what lets the estate's apps
-	@# plane publish this as a single raw binary like every other tool there.
+	@# `scp color-terminal remote:` a working install, and what lets the release be one
+	@# raw file that installs with download -> verify -> chmod and nothing else.
 	@echo '#__CT_PAYLOAD__' >> $(DIST)
-	@tar czf - themes shell | base64 >> $(DIST)
+	@# Normalised so the artifact is REPRODUCIBLE: plain `tar czf` records each file's
+	@# mtime and the builder's uid/gid, and git rewrites mtimes on every fresh clone, so
+	@# CI and a laptop would produce different bytes for identical source. Publishing a
+	@# sha256 only means something if anyone can rebuild the file and get the same one.
+	@tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - themes shell \
+	  | gzip -n | base64 >> $(DIST)
 	@chmod +x $(DIST)
 	@bash -n $(DIST) && echo "dist: $(DIST) ($$(wc -l < $(DIST)) lines, $$(wc -c < $(DIST)) bytes)"
 
@@ -49,9 +54,13 @@ lint:
 	for f in bin/color-terminal install.sh $(LIBS); do bash -n "$$f" || fail=1; done; \
 	bash -n shell/color-terminal.bash.in || fail=1; \
 	command -v zsh >/dev/null && { zsh -n shell/color-terminal.zsh.in || fail=1; }; \
+	sh -n docs/install.sh || fail=1; \
+	command -v dash >/dev/null && { dash -n docs/install.sh || fail=1; }; \
 	if command -v shellcheck >/dev/null; then \
 	  shellcheck -x -S warning bin/color-terminal install.sh $(LIBS) || fail=1; \
-	else echo "lint: shellcheck not installed (pacman -S shellcheck) — syntax only"; fi; \
+	  shellcheck -s sh -S warning docs/install.sh || fail=1; \
+	else echo "lint: shellcheck NOT INSTALLED (pacman -S shellcheck). This is the weak"; \
+	     echo "lint: gate — CI runs the strong one and WILL fail on what this misses."; fi; \
 	python3 tools/validate-themes.py || fail=1; \
 	exit $$fail
 
@@ -69,6 +78,12 @@ golden:
 
 themes:
 	@tools/import-scheme.sh --all
+
+# The three generated sections of the website, rebuilt from themes/*.theme. CI runs
+# this and fails if the page changes, so the swatches on the web are always the colours
+# the tool actually ships.
+docs:
+	@python3 tools/gen-site.py
 
 install: dist
 	@./install.sh
