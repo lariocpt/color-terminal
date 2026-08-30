@@ -294,6 +294,12 @@ section "public installer — the headline install command"
 # docs/install.sh is what `curl … | sh` runs, so it is part of the product and gets
 # tested like the rest of it. A local file:// release stands in for GitHub: same
 # SHA256SUMS format, same asset name, same code path.
+#
+# This is the one layer that needs more than bash and python3, because fetching is the
+# thing under test. Skipping is announced rather than silent: a run that quietly covers
+# one section fewer while printing the same "all passed" is worse than one that says so.
+if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+
 newhome
 REL="$SANDBOX/release$RANDOM"; mkdir -p "$REL"
 cp "$REPO/dist/color-terminal" "$REL/color-terminal"
@@ -337,6 +343,11 @@ out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" CT_QUIET=1 \
       sh "$REPO/docs/install.sh" --download-only="$H/ct" 2>&1) || true
 if [ -x "$H/ct" ]; then ok "installer: --download-only verifies against a multi-asset SHA256SUMS"
 else nope "installer: --download-only with extra assets" "$out"; fi
+
+else
+    printf '  \033[33mSKIP\033[0m neither curl nor wget is installed — the public installer\n'
+    printf '       was NOT covered by this run\n'
+fi
 
 section "golden — rendered config fragments"
 
