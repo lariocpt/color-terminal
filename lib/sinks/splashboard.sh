@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# shellcheck disable=SC2154
 # splashboard — the splash-screen sibling. Keeps the splash animation's palette in
 # step with the terminal, so the two never clash on a new shell.
 #

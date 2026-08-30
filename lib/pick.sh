@@ -1,3 +1,7 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# shellcheck disable=SC2034,SC2154
 # pick.sh — choose which theme this pane gets.
 #
 # Four modes, all fed by the same candidate set: the bundled corpus, narrowed by the

@@ -26,9 +26,11 @@ jobs:
           set -eu
           # shellcheck is an optional-but-preferred lint dependency; make lint runs
           # it when present and falls back to `bash -n` when not. CI installs it so
-          # the published gate is the strong one, not the syntax-only one.
+          # the published gate is the strong one, not the syntax-only one. dash is
+          # there for docs/install.sh, which is piped to `sh` by strangers and must
+          # parse under a real POSIX shell, not just bash in disguise.
           sudo apt-get update
-          sudo apt-get install -y shellcheck
+          sudo apt-get install -y shellcheck dash
       - name: Lint (syntax + shellcheck + theme contrast gate)
         run: make lint
       - name: Build the single-file artifact
@@ -49,3 +51,28 @@ jobs:
             echo "FAIL: docs/index.html references a remote asset (must be one self-contained file)"
             exit 1
           fi
+
+      # The site advertises an install URL that points at a file in this same
+      # directory, and the two are deployed by one workflow but written by hand in
+      # three places. If one moves and the others do not, the headline install command
+      # 404s and nobody finds out until a stranger tries it.
+      - name: The advertised install command matches what is published
+        run: |
+          set -eu
+          url="https://lariocpt.github.io/color-terminal/install.sh"
+          test -f docs/install.sh || { echo "FAIL: docs/install.sh is missing"; exit 1; }
+          grep -q "^CT_REPO_DEFAULT='${GITHUB_REPOSITORY}'" docs/install.sh \
+            || { echo "FAIL: docs/install.sh does not default to ${GITHUB_REPOSITORY}"; exit 1; }
+          for f in docs/index.html README.md; do
+            grep -qF "$url" "$f" || { echo "FAIL: $f does not advertise $url"; exit 1; }
+          done
+
+      # The three generated sections of the site are built from themes/ by
+      # tools/gen-site.py. Regenerating must be a no-op, or the page on the web is
+      # showing colours the tool no longer ships.
+      - name: The generated sections of the site are up to date
+        run: |
+          set -eu
+          make docs
+          git diff --exit-code -- docs/index.html \
+            || { echo "FAIL: docs/index.html is stale — run 'make docs' and commit"; exit 1; }

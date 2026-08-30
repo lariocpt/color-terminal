@@ -1,3 +1,8 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
+# shellcheck disable=SC2034,SC2154,SC1007
 # detect.sh — which terminal is actually rendering this shell?
 #
 # v1 asked `[[ $TERM == xterm-ghostty* ]]` and stopped there. That is wrong three
@@ -30,6 +35,8 @@
 # been replaced with the multiplexer's own value, so the rung-3 tests must not fire.
 ct_term_is() {                                # <glob>
     [ -z "$CT_MUX" ] || return 1
+    # $1 is a glob and must stay unquoted — that is the whole point of the argument.
+    # shellcheck disable=SC2254
     case "$TERM" in $1) return 0 ;; *) return 1 ;; esac
 }
 

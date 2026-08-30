@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# shellcheck disable=SC2034
 # foot — tier 1. Installed on the author's machine, so it is the second terminal that
 # gets dogfooded rather than mocked.
 #

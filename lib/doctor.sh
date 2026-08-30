@@ -1,3 +1,6 @@
+# shellcheck shell=bash
+# SC2154: CT_CFG_* are assigned by the config parser at runtime.
+# shellcheck disable=SC2154
 # doctor.sh — "why is my terminal not changing colour?", answered without guessing.
 #
 # Everything here is read-only. It exists because most failures of a tool like this

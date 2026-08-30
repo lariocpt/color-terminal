@@ -16,6 +16,7 @@ CT_LIB="$CT_REPO_DIR/lib"
 for f in common config theme pick state detect emit rcsplice backend doctor main; do
     . "$CT_LIB/$f.sh"
 done
+# shellcheck source=/dev/null
 for f in "$CT_LIB"/backends/*.sh "$CT_LIB"/sinks/*.sh; do . "$f"; done
 
 # Source-guard: tests source this file to reach the functions without running the

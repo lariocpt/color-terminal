@@ -1,3 +1,7 @@
+# shellcheck shell=bash
+# SC2034: globals are written in one fragment and read in another.
+# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
+# shellcheck disable=SC2034,SC1007
 # common.sh — logging, hashing, and the file-write primitives.
 #
 # HOT-PATH RULE, and it is the reason this file exists: color-terminal runs on
