@@ -1,9 +1,7 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
 # SC2154: CT_CFG_* are assigned by the config parser at runtime.
-# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
-# SC1090: the source path is built at runtime.
-# shellcheck disable=SC2034,SC2154,SC1007,SC1090
+# shellcheck disable=SC2034,SC2154
 # main.sh — argument handling and the one flow everything else serves.
 
 ct_usage() {
@@ -69,7 +67,9 @@ ct_should_swap() {
 
 ct_main() {
     local action=swap
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_OPT_terminal= CT_OPT_theme= CT_DRY=0 CT_FROM_HOOK=0
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_OPT_trigger= CT_NO_WIRE=0 CT_QUIET=${CT_QUIET:-0} CT_PREFIX=${CT_PREFIX:-$HOME/.local}
 
     while [ $# -gt 0 ]; do
@@ -114,8 +114,12 @@ ct_main() {
         [ -x /usr/bin/flock ] && CT_HAVE_FLOCK=1
     fi
 
-    if ct_opted_out && [ "$action" != doctor ] && [ "$action" != list ]; then
-        return 0
+    # The opt-out means "do not recolour". It must not mean "cannot be administered":
+    # NO_COLOR is exported globally by exactly the people who care about it most, and
+    # a tool that refuses to --uninstall for them is a trap. Only the two actions that
+    # touch the terminal honour it; everything else is diagnostics or housekeeping.
+    if ct_opted_out; then
+        case "$action" in swap|reset) return 0 ;; esac
     fi
 
     ct_tty_init

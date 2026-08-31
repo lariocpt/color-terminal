@@ -91,9 +91,11 @@ The contract: the generator replaces everything **between** a `BEGIN` and its
 matching `END` and leaves the two marker lines in place, so each slot regenerates
 idempotently. Each holds one complete `<section>` element.
 
-`ci.yml` runs `make docs` and fails if `docs/index.html` changes, so a theme added or
-renamed without regenerating is caught at review rather than on the web. The gallery in
-particular reads `themes/*.theme` directly — see the rule about real theme data above.
+`ci.yml` and `pages.yml` both run `make docs` and fail if `docs/index.html` changes,
+so a theme added or renamed without regenerating is caught at review rather than on
+the web. The gallery reads `themes/*.theme` through the same parser the validator
+uses; the terminal table reads `CT_BACKENDS` and each backend's `# tier:`/`# name:`
+header, so the tiers on the page are the backends that exist.
 
 Generated markup should reuse the chrome that is already there rather than
 inventing its own:
@@ -111,11 +113,12 @@ remote screenshots. Swatches are `background-color` on a `<div>`.
 ## Checking a change
 
 ```sh
-make docs                                                              # regenerate
-python3 -c "import html.parser,sys; \
-  p=html.parser.HTMLParser(); p.feed(open('docs/index.html').read())"   # parses
-grep -nE '<(link|script|img)[^>]+(src|href)="https?:' docs/index.html   # must be empty
-make lint                                                              # gates install.sh
+make docs                              # regenerate, then tools/check-site.py
+python3 tools/check-site.py docs/index.html   # rule 1 as code: every tag, every attribute
+make lint                              # gates install.sh (sh, dash, shellcheck -s sh)
 ```
+
+`pages.yml` runs exactly these before it uploads anything, so the page cannot deploy
+in a state this directory's own rules reject.
 
 Then open it at 360px wide, with and without JS, in both colour schemes.

@@ -29,9 +29,16 @@
 # backend — one we can identify but must not send colours to).
 
 # Registration order IS detection order, so it is an explicit list and not a glob.
-# Trap terminals must precede anything that matches on $TERM, and `generic` accepts
-# everything so it must be last.
-CT_BACKENDS=(ghostty foot generic)
+#
+#   mosh first: it forwards $TERM verbatim and sets nothing of its own, so it has to
+#     be found (by ancestry) before any backend that matches on $TERM claims the
+#     session and recolours into a transport that drops the bytes.
+#   TERM_PROGRAM backends (warp, appleterminal) before private-variable ones: every
+#     terminal overwrites TERM_PROGRAM, so it names the INNERMOST terminal, whereas
+#     GHOSTTY_RESOURCES_DIR or KONSOLE_VERSION are inherited by anything launched
+#     from that shell and would misidentify a terminal opened from inside another.
+#   generic accepts everything, so it must be last.
+CT_BACKENDS=(mosh warp appleterminal ghostty foot konsole generic)
 
 CT_MARK_BEGIN="# >>> color-terminal >>>"
 CT_MARK_END="# <<< color-terminal <<<"

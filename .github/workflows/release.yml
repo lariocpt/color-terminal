@@ -5,9 +5,16 @@ name: release
 # un-publish it. A tag push means the only thing that exists until the gate is green
 # is the tag.
 #
-# NOTE: ci.yml fires on push-to-main and pull_request — neither of which a tag push
-# triggers. So the full gate is repeated here on purpose: without it, the one path
-# that reaches the public would be the one path with no tests in front of it.
+# ORDER IS THE WHOLE DESIGN. The release is created as a DRAFT, its assets are
+# downloaded back and installed the way a stranger would, and only then is the draft
+# bit flipped. A draft is excluded from `latest` and its assets are not downloadable
+# without a token, so nothing broken can be served, even for a second. If anything
+# after the create fails, the release is re-drafted — so `latest` falls back to the
+# previous good release rather than pointing at a half-published one.
+#
+# ci.yml fires on push-to-main and pull_request; a tag push triggers neither. So the
+# full gate is repeated here: without it the one path to the public would be the one
+# path with no tests in front of it.
 on:
   push:
     tags: ['v*']
@@ -44,7 +51,9 @@ jobs:
             v[0-9]*) ;;
             *) echo "::error::'$tag' is not a vX.Y.Z release tag"; exit 1 ;;
           esac
+          pre=false; case "$tag" in *-*) pre=true ;; esac
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "pre=$pre" >> "$GITHUB_OUTPUT"
 
       - uses: actions/checkout@v5
         with:
@@ -52,35 +61,35 @@ jobs:
           persist-credentials: false
 
       # CT_VERSION in lib/common.sh is the only version string in the project. If it
-      # and the tag disagree, the published artifact lies about itself: the release
-      # page, `color-terminal --version` and the LAN mirror would print three
-      # different numbers for one set of bytes.
+      # and the tag disagree, the artifact lies about itself. A prerelease tag
+      # (v2.1.0-rc.1) must match on its BASE (2.1.0): that base is what every later
+      # step keys on — the changelog section, the version the artifact reports.
       - name: Assert the tag matches CT_VERSION
         id: v
         env:
           TAG: ${{ steps.t.outputs.tag }}
         run: |
           set -eu
+          line=$(grep -n '^CT_VERSION=' lib/common.sh | head -1 | cut -d: -f1)
           v=$(sed -n 's/^CT_VERSION=\(.*\)$/\1/p' lib/common.sh | head -1)
           [ -n "$v" ] || { echo "::error::could not parse CT_VERSION from lib/common.sh"; exit 1; }
-          base=${TAG#v}; base=${base%%-*}       # v2.1.0-rc.1 -> 2.1.0
+          base=${TAG#v}; base=${base%%-*}
           [ "$base" = "$v" ] || {
-            echo "::error file=lib/common.sh,line=10::tag $TAG claims $base, lib/common.sh says CT_VERSION=$v"
+            echo "::error file=lib/common.sh,line=${line:-1}::tag $TAG claims $base, lib/common.sh says CT_VERSION=$v"
             exit 1; }
           echo "version=$v" >> "$GITHUB_OUTPUT"
 
-      # The release notes are the changelog section, so a missing section is a missing
-      # release page. Failing here beats publishing an empty one.
+      # Release notes are the changelog section for the BASE version, so an rc reuses
+      # the section of the release it rehearses. Literal prefix match, not a regex:
+      # the heading contains [ and ], and getting those through a shell string into a
+      # dynamic awk regex intact silently matches nothing.
       - name: Release notes must exist
         env:
-          TAG: ${{ steps.t.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -eu
-          # Literal prefix match, not a regex: the heading contains [ and ], and getting
-          # those through a shell string into an awk dynamic regex intact is a trap that
-          # silently matches nothing and ships an empty release page.
-          awk -v want="## [${TAG#v}]" 'index($0, want) == 1 {found = 1} END {exit !found}' CHANGELOG.md \
-            || { echo "::error file=CHANGELOG.md::no '## [${TAG#v}]' section for $TAG"; exit 1; }
+          awk -v want="## [$VERSION]" 'index($0, want) == 1 {found = 1} END {exit !found}' CHANGELOG.md \
+            || { echo "::error file=CHANGELOG.md::no '## [$VERSION]' section"; exit 1; }
 
       - name: Install deps
         run: |
@@ -88,42 +97,44 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y shellcheck dash
 
-      - name: Lint (syntax + shellcheck + theme contrast gate)
+      - name: Lint (syntax + shellcheck + theme contrast gate + site checks)
         run: make lint
 
       - name: Build the artifact and its checksum
         run: |
           set -eu
           make dist
-          # Generated from INSIDE dist/ so the file names the artifact 'color-terminal'
-          # with no directory component. `sha256sum -c` reads the filename out of this
-          # file, so 'dist/color-terminal' would force every downloader to recreate a
-          # dist/ directory to check it.
+          # Generated from INSIDE dist/ so the file names the artifact with no
+          # directory component: `sha256sum -c` reads the filename out of this file.
           ( cd dist && sha256sum "$ASSET" > SHA256SUMS && sha256sum -c SHA256SUMS )
           cat dist/SHA256SUMS
 
-      - name: Test (pty escapes, detection matrix, concurrency, latency, self-install)
+      # ./test/run.sh, not `make test`: the test target depends on the dist rule and
+      # would rebuild the file whose checksum was just taken.
+      - name: Test (pty escapes, detection matrix, concurrency, latency, installers)
         run: ./test/run.sh
 
       - name: The artifact must report the tagged version
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -eu
           got=$(dist/color-terminal --version | tr -d '\r')
-          want="color-terminal ${{ steps.v.outputs.version }}"
-          [ "$got" = "$want" ] || { echo "::error::artifact says '$got', expected '$want'"; exit 1; }
+          [ "$got" = "color-terminal $VERSION" ] || { echo "::error::artifact says '$got', expected 'color-terminal $VERSION'"; exit 1; }
 
-      # Draft first, un-draft last. `gh release create <tag> <files>` creates the
-      # release and THEN uploads: for those seconds the release exists, is already
-      # `latest`, and its assets 404 — so every install one-liner in flight fails.
-      # A draft is excluded from `latest` and its assets are not downloadable, which
-      # makes flipping the draft bit the atomic step.
-      - name: Publish
+      # Draft, always. A fresh release is created as one; an existing release being
+      # re-run is put BACK into draft before its assets are replaced, so the window in
+      # which `latest` has half-replaced assets does not exist — `latest` falls back
+      # to the previous release for the duration instead.
+      - name: Publish as a draft
         env:
           TAG: ${{ steps.t.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
+          PRE: ${{ steps.t.outputs.pre }}
         run: |
           set -eu
           notes=$(mktemp)
-          awk -v want="## [${TAG#v}]" '
+          awk -v want="## [$VERSION]" '
             index($0, want) == 1 { f = 1; next }
             f && index($0, "## [") == 1 { exit }
             f { print }
@@ -132,59 +143,90 @@ jobs:
           {
             printf '\n### Install\n\n'
             printf '```sh\ncurl -fsSL https://lariocpt.github.io/color-terminal/install.sh | sh\n```\n\n'
-            printf 'The installer verifies this checksum before it writes anything:\n\n```\n%s\n```\n' \
+            printf 'The installer verifies this checksum before it runs anything:\n\n```\n%s\n```\n' \
                    "$(cat dist/SHA256SUMS)"
           } >> "$notes"
 
-          pre=''
-          case "$TAG" in *-*) pre='--prerelease' ;; esac
+          pre_flag='--prerelease=false'; [ "$PRE" = true ] && pre_flag='--prerelease'
 
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft
             gh release upload "$TAG" dist/"$ASSET" dist/SHA256SUMS --clobber
+            # A re-run exists to fix something; the notes and title are part of that.
+            gh release edit "$TAG" --title "color-terminal ${TAG#v}" --notes-file "$notes" "$pre_flag"
           else
-            # shellcheck disable=SC2086
             gh release create "$TAG" dist/"$ASSET" dist/SHA256SUMS \
               --draft --verify-tag \
               --title "color-terminal ${TAG#v}" \
-              --notes-file "$notes" $pre
+              --notes-file "$notes" "$pre_flag"
           fi
 
-          if [ -n "$pre" ]; then
-            gh release edit "$TAG" --draft=false
-          else
-            gh release edit "$TAG" --draft=false --latest
-          fi
-
-      # Download what a stranger downloads. This is the only step that proves the
-      # PUBLISHED bytes work, rather than the local build that produced them.
-      - name: Smoke-test the published assets
+      # The draft's assets, downloaded back and installed the way a stranger would —
+      # BEFORE anything is public. This is the only step that proves the PUBLISHED
+      # bytes work, rather than the local build that produced them.
+      - name: Verify the draft's assets end to end
         env:
           TAG: ${{ steps.t.outputs.tag }}
+          VERSION: ${{ steps.v.outputs.version }}
         run: |
           set -eu
+          want=$(ls themes/*.theme | wc -l)
           d=$(mktemp -d); mkdir -p "$d/home" "$d/run"
           gh release download "$TAG" --dir "$d" --pattern "$ASSET" --pattern SHA256SUMS
           ( cd "$d" && sha256sum -c SHA256SUMS )
-          # Release assets arrive without the executable bit — a real trap for anything
-          # downstream that assumes otherwise.
-          chmod +x "$d/$ASSET"
+          chmod +x "$d/$ASSET"                  # release assets arrive without the bit
+          got=$("$d/$ASSET" --version | tr -d '\r')
+          [ "$got" = "color-terminal $VERSION" ] || { echo "::error::published asset says '$got'"; exit 1; }
           HOME="$d/home" XDG_RUNTIME_DIR="$d/run" CT_QUIET=1 \
             "$d/$ASSET" --install --no-wire >/dev/null
           n=$(ls "$d/home/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
-          [ "$n" -eq 24 ] || { echo "::error::published asset installed $n themes, expected 24"; exit 1; }
+          [ "$n" -eq "$want" ] || { echo "::error::published asset installed $n themes, expected $want"; exit 1; }
 
-      # The exact URL docs/install.sh resolves, fetched with no credentials the way a
-      # stranger's curl does. It only exists for a public repo and a non-prerelease.
-      - name: The public install path resolves end to end
-        if: ${{ github.event.repository.private == false && !contains(steps.t.outputs.tag, '-') }}
+      # Only now does it become visible. `--latest` only when this tag is the highest
+      # non-prerelease semver: re-publishing an older tag must never demote the
+      # current release and downgrade everyone running the one-liner.
+      - name: Flip it live
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+          PRE: ${{ steps.t.outputs.pre }}
         run: |
           set -eu
-          d=$(mktemp -d); mkdir -p "$d/home" "$d/run"
-          base="https://github.com/$GH_REPO/releases/latest/download"
-          for f in "$ASSET" SHA256SUMS; do
-            curl -fsSL --retry 5 --retry-all-errors --proto '=https' -o "$d/$f" "$base/$f"
+          latest='--latest=false'
+          if [ "$PRE" != true ]; then
+            top=$({ gh release list --exclude-drafts --exclude-pre-releases --json tagName -q '.[].tagName'; echo "$TAG"; } | sort -V | tail -1)
+            [ "$top" = "$TAG" ] && latest='--latest'
+          fi
+          gh release edit "$TAG" --draft=false "$latest"
+          echo "published $TAG ($latest)"
+
+      # Anything above failed after the release was created: put it back into draft,
+      # so `latest` is the previous good release and the failed one serves nothing.
+      - name: Re-draft on failure
+        if: failure()
+        env:
+          TAG: ${{ steps.t.outputs.tag }}
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --draft && echo "re-drafted $TAG"
+          fi
+
+      # The exact path docs/install.sh takes, unauthenticated, with a bounded retry
+      # for the redirect/CDN to catch up — and a version compare, because a stale
+      # `latest` serving the previous release would pass every checksum.
+      - name: The public install path serves this release
+        if: ${{ github.event.repository.private == false && steps.t.outputs.pre != 'true' }}
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          set -eu
+          d=$(mktemp -d); mkdir -p "$d/run"
+          for i in 1 2 3 4 5 6; do
+            rm -rf "$d/home"; mkdir -p "$d/home"
+            if HOME="$d/home" XDG_RUNTIME_DIR="$d/run" CT_QUIET=1 \
+                 sh docs/install.sh --no-wire --prefix="$d/home/.local" >/dev/null 2>&1 \
+               && [ "$("$d/home/.local/bin/$ASSET" --version)" = "color-terminal $VERSION" ]; then
+              echo "public latest serves color-terminal $VERSION"; exit 0
+            fi
+            echo "attempt $i: latest is not serving $VERSION yet"; sleep 10
           done
-          ( cd "$d" && sha256sum -c SHA256SUMS )
-          HOME="$d/home" XDG_RUNTIME_DIR="$d/run" PREFIX="$d/home/.local" CT_QUIET=1 \
-            sh docs/install.sh --no-wire
-          "$d/home/.local/bin/$ASSET" --version
+          echo "::error::the public latest URL never served $VERSION"; exit 1

@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
 # shellcheck disable=SC2034
+# tier: 2
+# name: everything else
 # generic — every terminal we have not been introduced to, and every ssh session.
 #
 # This is not a fallback in the apologetic sense: it is the correct answer for the

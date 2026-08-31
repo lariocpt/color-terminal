@@ -18,7 +18,9 @@ pipeline {
     agent any
     options {
         disableConcurrentBuilds()
-        buildDiscarder(logRotator(numToKeepStr: '20'))
+        // Every cron poll is a build record even when it mirrors nothing, so 20 would
+        // evict the last real mirror's log within about five hours. 200 is two days.
+        buildDiscarder(logRotator(numToKeepStr: '200'))
         timeout(time: 25, unit: 'MINUTES')
     }
     // GitHub cannot reach this Jenkins, so it asks rather than being told. Polling the
@@ -41,25 +43,46 @@ pipeline {
         stage('Resolve') {
             steps {
                 script {
+                    // Egress is checked HERE, before anything depends on it: this stage
+                    // runs every 15 minutes, and a quiet NOT_BUILT beats a red build.
+                    def online = sh(returnStatus: true, script: '''
+                        curl -fsS -o /dev/null -m 20 https://github.com
+                    ''') == 0
+                    if (!online) {
+                        currentBuild.result = 'NOT_BUILT'
+                        currentBuild.description = 'no route to github.com'
+                        env.NEEDED = '0'
+                        return
+                    }
+
+                    // The /releases/latest redirect lands on /releases/tag/vX.Y.Z and
+                    // excludes drafts and prereleases — exactly the set to mirror. With no
+                    // release yet it lands on /releases and the tag comes back as
+                    // "releases": a quiet NOT_BUILT, not an error, for the same reason.
                     env.TAG = params.TAG?.trim() ?: sh(returnStdout: true, script: '''
                         set -eu
-                        # The /releases/latest redirect lands on /releases/tag/vX.Y.Z and
-                        # excludes drafts and prereleases — exactly the set to mirror.
                         url=$(curl -fsS -o /dev/null -w '%{url_effective}' -L -I \
-                              "https://github.com/lariocpt/color-terminal/releases/latest")
+                              "https://github.com/${GH_REPO}/releases/latest")
                         printf '%s' "${url##*/}"
                     ''').trim()
 
-                    if (!(env.TAG ==~ /^v[0-9].*/)) { error "not a release tag: '${env.TAG}'" }
+                    if (!(env.TAG ==~ /^v[0-9][0-9A-Za-z.+-]*$/)) {
+                        currentBuild.result = 'NOT_BUILT'
+                        currentBuild.description = "no release to mirror (got '${env.TAG}')"
+                        env.NEEDED = '0'
+                        return
+                    }
                     env.VERSION = env.TAG.substring(1)
 
-                    // Already mirrored? Then this poll is a no-op, and the build stops
-                    // rather than churning /srv/apps every fifteen minutes.
-                    def onPlane = sh(returnStatus: true, script: """
-                        awk -F'\\t' -v v='${env.VERSION}' \
-                            '\$1=="tool" && \$2=="color-terminal" && \$3==v && index(\$7,"/latest/")>0 {x++} END{exit !x}' \
+                    // Already mirrored? Then this poll is a no-op. The version reaches the
+                    // shell through the environment, never by interpolation: a Groovy
+                    // string with a tag name inside shell quotes is an injection waiting
+                    // for a tag with a quote in it.
+                    def onPlane = sh(returnStatus: true, script: '''
+                        awk -F'\t' -v v="$VERSION" \
+                            '$1=="tool" && $2=="color-terminal" && $3==v && index($7,"/latest/")>0 {x++} END{exit !x}' \
                             /srv/apps/index.tsv
-                    """) == 0
+                    ''') == 0
                     env.NEEDED = (onPlane && !params.FORCE) ? '0' : '1'
 
                     echo "tag=${env.TAG} version=${env.VERSION} onPlane=${onPlane} needed=${env.NEEDED}"
@@ -86,8 +109,6 @@ pipeline {
                     # adding them to it would make this pipeline depend on a controller
                     # rebuild. It runs in a container instead — see the Gate stage.
                     command -v docker    >/dev/null || { echo "docker missing — the gate runs in a container"; exit 1; }
-                    curl -fsS -o /dev/null -m 20 https://github.com \
-                        || { echo "no egress to github.com — mirror mode needs it"; exit 1; }
                 '''
             }
         }
@@ -100,6 +121,10 @@ pipeline {
             steps {
                 sh '''
                     set -eu
+                    # The gate belongs to the pipeline, not the release: take it from the
+                    # branch this Jenkinsfile was read from, before the tag replaces the
+                    # tree. Untracked, so the checkout leaves it alone.
+                    cp test/ci-gate.sh .ci-gate.sh
                     git fetch --tags --force origin
                     git -c advice.detachedHead=false checkout --detach "refs/tags/${TAG}"
                     v=$(sed -n 's/^CT_VERSION=\\(.*\\)$/\\1/p' lib/common.sh | head -1)
@@ -122,9 +147,9 @@ pipeline {
                     done
 
                     # SHA256SUMS names the artifact with no directory component, so it only
-                    # verifies from inside the directory holding it. That is deliberate: this
-                    # job, docs/install.sh and a human all check it the same way.
-                    ( cd dist && sha256sum -c SHA256SUMS )
+                    # verifies from inside the directory holding it. --ignore-missing because
+                    # a release may list assets this job does not download (a .sig, a bundle).
+                    ( cd dist && sha256sum -c --ignore-missing SHA256SUMS )
 
                     # Release assets arrive WITHOUT the executable bit. That matters more than
                     # it looks: test/run.sh rebuilds dist/color-terminal when it is missing or
@@ -132,7 +157,10 @@ pipeline {
                     # local rebuild and publish bytes that never came from the release.
                     chmod +x dist/color-terminal
 
-                    awk '{print $1}' dist/SHA256SUMS > .released-sha
+                    # Matched by asset name, not by line: the first second asset would
+                    # otherwise turn this into two lines and fail every identity check.
+                    awk -v a=color-terminal '$2 == a || $2 == "*" a { print $1; exit }' dist/SHA256SUMS > .released-sha
+                    [ -s .released-sha ] || { echo "FAIL: SHA256SUMS has no entry for color-terminal"; exit 1; }
                     echo "fetched ${TAG}: $(cat .released-sha)"
                 '''
             }
@@ -141,67 +169,21 @@ pipeline {
         // One container, one apt, both checks. The Jenkins image has no python3 and no
         // make, and the workspace is a named volume so it cannot be bind-mounted — the
         // same constraint crust and opn work around with docker create + docker cp.
+        // The script itself is test/ci-gate.sh (staged by Source), where `make lint`
+        // can see it.
         stage('Gate') {
             when { environment name: 'NEEDED', value: '1' }
             steps {
                 sh '''
                     set -eu
-
-                    # The in-container half is written to the workspace and copied in with
-                    # everything else, rather than passed as an inline `sh -c` string. Two
-                    # levels of shell quoting nested inside a Groovy string is how this kind
-                    # of script acquires bugs nobody can see.
-                    cat > .ci-gate.sh <<'GATE'
-set -eu
-export DEBIAN_FRONTEND=noninteractive
-apt-get update -qq >/dev/null
-apt-get install -y -qq --no-install-recommends python3 make curl ca-certificates >/dev/null
-cd /w
-
-# Themes are data the tool cannot run without, and a theme that fails the contrast gate
-# makes somebody's terminal unreadable.
-python3 tools/validate-themes.py
-
-# NOT `make test`. That target depends on the dist rule, and a checkout whose lib/*.sh
-# mtimes land after the download would rebuild over the released bytes and quietly
-# destroy the point of this pipeline. test/run.sh only rebuilds dist/color-terminal when
-# it is missing or non-executable, and Fetch made it executable.
-./test/run.sh
-
-got=$(./dist/color-terminal --version | tr -d '\r')
-[ "$got" = "color-terminal $VERSION" ] \
-  || { echo "FAIL: artifact reports '$got', expected 'color-terminal $VERSION'"; exit 1; }
-
-# The payload must survive the round trip, or the plane serves a tool with no themes —
-# which fails at first use, not at install time.
-tmp=$(mktemp -d)
-HOME="$tmp" XDG_RUNTIME_DIR="$tmp/run" CT_QUIET=1 ./dist/color-terminal --install --no-wire >/dev/null
-n=$(ls "$tmp/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
-[ "$n" -eq 24 ] || { echo "FAIL: artifact installed $n themes, expected 24"; exit 1; }
-echo "payload round-trip: $n themes"
-
-# Provenance, and it is what makes "mirror" mean something: proof the released bytes
-# came from this tag, without rebuilding what actually gets published. `make dist` is
-# reproducible as of 2.0.0 — the payload tar is built with normalised mtimes, ownership
-# and sort order — so a rebuild of this tag must match the published file byte for byte.
-if [ "$PROVENANCE" = true ]; then
-    rm -rf /build && mkdir -p /build
-    tar -cf - --exclude=./dist --exclude=./.git . | tar -xf - -C /build
-    make -s -C /build dist >/dev/null
-    cmp /build/dist/color-terminal /w/dist/color-terminal \
-      || { echo "FAIL: the released artifact is not what $TAG builds"; exit 1; }
-    echo "provenance: released artifact is byte-identical to a rebuild of $TAG"
-fi
-
-# And nothing above touched the file that is about to be published.
-[ "$(sha256sum /w/dist/color-terminal | awk '{print $1}')" = "$(cat /w/.released-sha)" ] \
-  || { echo "FAIL: dist/color-terminal changed during the gate — something rebuilt it"; exit 1; }
-GATE
-
-                    CID=$(docker create -w /w \
+                    [ -f .ci-gate.sh ] || { echo "FAIL: .ci-gate.sh missing — Source should have staged it"; exit 1; }
+                    CID=$(docker create --rm -w /w \
                             -e VERSION="$VERSION" -e TAG="$TAG" -e PROVENANCE="$PROVENANCE" \
                             debian:stable-slim sh /w/.ci-gate.sh)
-                    trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT
+                    # EXIT alone is not enough: an abort or the pipeline timeout TERMs this
+                    # shell, and POSIX sh runs no EXIT trap on an untrapped signal — the
+                    # container would outlive the build. --rm above is the second belt.
+                    trap 'docker rm -f "$CID" >/dev/null 2>&1 || true' EXIT INT TERM HUP
                     # docker cp both ways — never -v "$PWD:/w". The workspace lives in a
                     # named volume that the daemon cannot see at that path.
                     docker cp "$PWD/." "$CID:/w" >/dev/null

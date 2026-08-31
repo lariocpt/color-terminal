@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
-# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
-# shellcheck disable=SC2034,SC1007
+# shellcheck disable=SC2034
 # common.sh — logging, hashing, and the file-write primitives.
 #
 # HOT-PATH RULE, and it is the reason this file exists: color-terminal runs on
@@ -11,7 +10,7 @@
 # expansion. Every helper below is a bash builtin except where a comment says
 # otherwise and explains why.
 
-CT_VERSION=2.0.0
+CT_VERSION=2.0.1
 
 # --- diagnostics ------------------------------------------------------------------
 # Everything goes to stderr. stdout is reserved for machine-readable output
@@ -82,6 +81,7 @@ ct_append() {                                 # <file> <line>
 # forkless but cannot block, so it spins briefly and then proceeds unlocked rather
 # than deadlocking a login shell.
 ct_lock() {                                   # <lockfile>; sets CT_LOCK_FD or CT_LOCK_FILE
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_LOCK_FD= CT_LOCK_FILE=
     if [ -n "$CT_HAVE_FLOCK" ]; then
         exec {CT_LOCK_FD}>>"$1" 2>/dev/null || return 1
@@ -104,6 +104,7 @@ ct_lock() {                                   # <lockfile>; sets CT_LOCK_FD or C
 ct_unlock() {
     [ -n "$CT_LOCK_FD" ] && exec {CT_LOCK_FD}>&- 2>/dev/null
     [ -n "$CT_LOCK_FILE" ] && rm -f "$CT_LOCK_FILE"
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_LOCK_FD= CT_LOCK_FILE=
     return 0
 }

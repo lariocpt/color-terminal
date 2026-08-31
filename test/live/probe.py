@@ -30,11 +30,19 @@ def _theme_colour(key):
             k, v = line.split("=", 1)
             if k.strip() == key:
                 return v.strip()
-    sys.exit("probe: %s has no '%s'" % (_THEME_FILE, key))
+    raise KeyError("%s has no '%s'" % (_THEME_FILE, key))
 
 
-THEME_BG = _theme_colour("background")
-THEME_C1 = _theme_colour("color1")
+# A corpus problem is reported THROUGH the reply file, not on stderr: run.sh discards
+# this process's stderr and reads only the file, so an exit here would be reported as
+# "the window did not run the probe" — blaming the terminal for a broken theme.
+try:
+    THEME_BG = _theme_colour("background")
+    THEME_C1 = _theme_colour("color1")
+except (OSError, KeyError) as e:
+    with open(OUT, "w") as fh:
+        fh.write("VERDICT=ERROR\nerror=probe could not read the expected colours: %s\n" % e)
+    sys.exit(1)
 
 CT = os.environ.get("CT_BIN", os.path.expanduser("~/.local/bin/color-terminal"))
 subprocess.run([CT, "--theme", THEME], check=False)
