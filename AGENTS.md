@@ -23,9 +23,11 @@ iterations against 4 ms for the same work in parameter expansion. Every helper i
 why. CI asserts a ~40 ms swap and ~15 ms no-op budget; if you add a fork, you will find
 out there.
 
-**`LIBS` order in `Makefile` is load-bearing** and must match the source order in
-`bin/color-terminal`: definitions before use, backends before `main` dispatches to
-them. Adding a file means editing both.
+**`lib/manifest` is the one list of source files**, read by both `make dist` and
+`bin/color-terminal`, in source order: definitions before use, backends before `main`
+dispatches to them. Adding a file means adding one line there — `make lint` fails on
+a `lib/**/*.sh` that is not listed. (The two used to be separate lists; they drifted,
+and `bin/color-terminal --install` died with `ct_install: command not found`.)
 
 **Themes are parsed, never sourced.** A theme is data from the internet. `ct_parse_kv`
 in `lib/config.sh` reads it; nothing ever executes it.
@@ -69,23 +71,46 @@ narrow as the file allows, and never add one without saying why on the line abov
 ## Adding a terminal
 
 One file in `lib/backends/` implementing six functions, plus one line in
-`CT_BACKENDS`. The contract is at the top of `lib/backend.sh`. Most terminals need
-nothing: `generic.sh` already covers anything that implements the universal OSC subset,
-and "unknown" is a supported case rather than an error.
+`CT_BACKENDS` and one in `lib/manifest`. The contract is at the top of
+`lib/backend.sh`. Most terminals need nothing: `generic.sh` already covers anything
+that implements the universal OSC subset, and "unknown" is a supported case rather
+than an error.
 
-Add a tier-3 entry instead when a terminal *accepts* the sequences and does not render
-them — konsole does exactly that. Declining loudly is correct; emitting into it looks
-like it worked.
+Every backend file carries two header lines the website generator reads:
+
+```
+# tier: 1
+# name: ghostty
+```
+
+That is how the terminal table on the site is derived from the code rather than
+typed in — the site once advertised a tier 3 that no backend implemented, and CI
+could not see it because the table was a string constant.
+
+**Tier 3** is a backend that recognises a terminal and refuses it: `_detect`, an
+empty `_caps` (`printf ''`), and `_decline` printing the reason `--doctor` shows.
+Add one when a terminal *accepts* the sequences and does not render them — konsole
+does exactly that. Declining loudly is correct; emitting into it looks like it worked.
+`lib/backends/mosh.sh` is the odd one: there is no variable to test, so it walks
+`/proc` for a `mosh-server` ancestor, with builtins, only inside an ssh session.
+
+**Registration order in `CT_BACKENDS` is detection order**, and the comment above it
+explains the three constraints. The short version: `TERM_PROGRAM` is overwritten by
+every terminal so it names the innermost one; private variables like
+`KONSOLE_VERSION` are inherited by anything launched from that shell; and mosh must
+come before anything that matches on `$TERM`.
 
 ## Tests
 
 | layer | needs | covers |
 |---|---|---|
-| `test/run.sh` | nothing | exact escape bytes via a pty that plays the terminal, marker-block surgery, detection matrix, concurrency, latency, self-install, the public installer |
+| `test/run.sh` | nothing (curl for the installer layer, which skips loudly without it) | exact escape bytes via a pty that plays the terminal, marker-block surgery, detection matrix incl. tier 3, concurrency, latency, self-install, opt-outs vs administration, reproducible build, the public installer |
 | `test/live/run.sh` | a display | real windows in terminals installed here |
 | `test/containers/run.sh` | podman | real terminals installed nowhere, queried over their own escape protocol |
 
-`test/faketerm.py` allocates a pty, becomes the terminal, and asserts exact bytes.
+`test/ci-gate.sh` is the Jenkins mirror's gate, run inside a container; it lives here
+so `make lint` sees it. `test/faketerm.py` allocates a pty, becomes the terminal, and
+asserts exact bytes.
 Every test runs against a throwaway `HOME` behind a guard that refuses to run if the
 sandbox is not under a temp dir — v1 wrote to five real dotfiles and a leaking test
 would rewrite your own `~/.zshrc`.
@@ -100,7 +125,13 @@ changes the file, so a theme added without `make docs` is caught at review.
 `docs/install.sh` is the public installer and is **POSIX sh**, not bash: it is piped to
 `sh` by strangers. `make lint` checks it with `sh -n`, `dash -n` and
 `shellcheck -s sh`. Do not add it to the bash shellcheck list — that would accept every
-bashism.
+bashism. It never writes into `$PREFIX/bin` itself: it verifies, then hands the temp
+file to the artifact's own `--install`, which is what makes `--dry-run` dry. Keep it
+that way.
+
+`tools/check-site.py` is rule 1 of `docs/README.md` (zero external requests) as code;
+`make lint`, `ci.yml` and `pages.yml` all run it. The site deploys only after
+`pages.yml`'s own checks pass — `ci.yml` cannot gate it, so it does not claim to.
 
 Note there are two files named `install.sh`. The root one is the checkout entrypoint
 and runs `make dist`; `docs/install.sh` downloads a release. Each header says so.
@@ -117,13 +148,16 @@ and runs `make dist`; `docs/install.sh` downloads a release. Each header says so
 ```
 
 `.github/workflows/release.yml` takes it from there: it refuses a tag that disagrees
-with `CT_VERSION`, refuses a tag with no changelog section, runs the full gate, and
-publishes as a **draft** before flipping it live — because `gh release create` uploads
-assets *after* creating the release, and for those seconds `latest` exists with no
-assets and every install one-liner in flight fails.
+with `CT_VERSION`, refuses a tag with no changelog section, runs the full gate, creates
+the release as a **draft**, downloads the draft's assets back and installs them the way
+a stranger would, and only then flips it live. If anything fails after the create, the
+release is re-drafted, so `latest` falls back to the previous good one. `--latest` is
+only set when the tag is the highest non-prerelease semver, so re-publishing an old
+tag cannot demote the current release.
 
-Tag `vX.Y.Z-rc.N` to rehearse: it publishes as a prerelease, never becomes `latest`,
-and leaves the public one-liner untouched.
+Tag `vX.Y.Z-rc.N` to rehearse: it must match `CT_VERSION=X.Y.Z`, reuses that
+section's changelog, publishes as a prerelease, never becomes `latest`, and leaves the
+public one-liner untouched.
 
 The LAN Jenkins job mirrors the released bytes to an internal plane. It never builds —
 byte identity with the release is the whole point, and it asserts it.

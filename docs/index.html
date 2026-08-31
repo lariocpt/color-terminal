@@ -625,7 +625,7 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
             <tr>
               <td><strong>3</strong></td>
               <td>detected, declined, and told why</td>
-              <td>konsole, Warp, mosh, Apple Terminal</td>
+              <td>mosh, Warp, Apple Terminal, konsole</td>
             </tr>
           </tbody>
         </table>
@@ -640,7 +640,7 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
         nothing &mdash; it <em>looks</em> like it worked. konsole parses the palette
         sequence, stores it, answers queries about it, and never renders with it; Warp
         ignores it; mosh drops it; Apple Terminal has no palette sequence at all.
-        Run <code>color-terminal --doctor</code> to see which one you are in.
+        Run <code>color-terminal --doctor</code> to see which one you are in, and why.
       </p>
     </section>
     <!-- ct:generated:support END -->

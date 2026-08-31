@@ -1,0 +1,29 @@
+# lib/manifest — every source fragment, in SOURCE ORDER.
+#
+# Read by the Makefile (to concatenate dist/color-terminal) AND by bin/color-terminal
+# (to run from a checkout), so the artifact and the dev entrypoint cannot disagree
+# about what the tool is made of. `make lint` fails if a lib/**/*.sh exists that is
+# not listed here.
+#
+# Order is load-bearing: definitions before use, and backends before main dispatches
+# to them. Detection order is NOT this — that is CT_BACKENDS in lib/backend.sh.
+lib/common.sh
+lib/config.sh
+lib/theme.sh
+lib/pick.sh
+lib/state.sh
+lib/detect.sh
+lib/emit.sh
+lib/rcsplice.sh
+lib/backend.sh
+lib/backends/generic.sh
+lib/backends/ghostty.sh
+lib/backends/foot.sh
+lib/backends/konsole.sh
+lib/backends/warp.sh
+lib/backends/appleterminal.sh
+lib/backends/mosh.sh
+lib/sinks/splashboard.sh
+lib/doctor.sh
+lib/install.sh
+lib/main.sh

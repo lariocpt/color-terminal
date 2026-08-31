@@ -1,8 +1,7 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
 # SC2154: CT_CFG_* are assigned by the config parser at runtime.
-# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
-# shellcheck disable=SC2034,SC2154,SC1007
+# shellcheck disable=SC2034,SC2154
 # detect.sh — which terminal is actually rendering this shell?
 #
 # v1 asked `[[ $TERM == xterm-ghostty* ]]` and stopped there. That is wrong three
@@ -46,6 +45,7 @@ ct_term_is() {                                # <glob>
 ct_env_local() { [ -z "${SSH_CONNECTION:-}" ] && [ -z "${SSH_TTY:-}" ]; }
 
 ct_detect_context() {
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_MUX= CT_SCREEN= CT_SSH=
     [ -n "${SSH_CONNECTION:-}${SSH_TTY:-}${SSH_CLIENT:-}" ] && CT_SSH=1
     if   [ -n "${TMUX:-}" ];   then CT_MUX=tmux
@@ -55,6 +55,7 @@ ct_detect_context() {
 }
 
 ct_detect() {
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_TERM= CT_BACKEND= CT_CONF=guess CT_LOCAL=0
     ct_detect_context
 

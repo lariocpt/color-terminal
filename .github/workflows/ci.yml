@@ -7,7 +7,9 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded runs on a PR, never on main: two quick merges would otherwise
+  # leave the first commit with no completed gate at all.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   # There is no compiler here: the artifact IS the source (lib/*.sh), so the gate
@@ -15,8 +17,9 @@ jobs:
   # pty, plays the terminal, and asserts the exact escape bytes, the marker-block
   # surgery, the concurrency behaviour and the latency budget — all with no
   # terminal emulator installed, which is exactly what a CI container has. The same
-  # gate the Jenkinsfile runs before it will publish to the apps plane, so a red
-  # suite never reaches /srv/apps or the page.
+  # gate release.yml runs before publishing and the Jenkins mirror runs against the
+  # released bytes. The website is gated separately, by pages.yml's own checks —
+  # this workflow cannot block it, so it does not pretend to.
   gate:
     runs-on: ubuntu-latest
     steps:
@@ -40,17 +43,11 @@ jobs:
           ls -lh dist/color-terminal
       - name: Test (pty escapes, detection matrix, concurrency, latency, self-install)
         run: make test
-      # docs/ is a release surface too, not just docs: it is the file GitHub Pages
-      # serves. A stray remote asset or a page-level scroll would break it for
-      # somebody, so mirror the two checks in docs/README.md.
+      # docs/ is a release surface too, not just docs: it is what GitHub Pages serves.
+      # tools/check-site.py walks every tag and attribute; the grep it replaced was
+      # blind to single quotes, srcset, url() and iframes.
       - name: Check the website stays self-contained
-        run: |
-          set -eu
-          python3 -c "import html.parser; html.parser.HTMLParser().feed(open('docs/index.html').read())"
-          if grep -nE '<(link|script|img)[^>]+(src|href)="https?:' docs/index.html; then
-            echo "FAIL: docs/index.html references a remote asset (must be one self-contained file)"
-            exit 1
-          fi
+        run: python3 tools/check-site.py docs/index.html
 
       # The site advertises an install URL that points at a file in this same
       # directory, and the two are deployed by one workflow but written by hand in

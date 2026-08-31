@@ -6,23 +6,34 @@
 # open() calls into one on a hot path that runs at every shell start.
 
 SHELL := /bin/bash
+# pipefail, so a failing tar in the dist recipe fails the build instead of quietly
+# appending an empty payload — which is how a Mac would otherwise install zero themes.
+.SHELLFLAGS := -o pipefail -c
 PREFIX ?= $(HOME)/.local
 DIST := dist/color-terminal
 
-# Order is load-bearing: definitions before use, backends before main dispatches to
-# them, and it must match the source order in bin/color-terminal.
-LIBS := lib/common.sh lib/config.sh lib/theme.sh lib/pick.sh lib/state.sh \
-        lib/detect.sh lib/emit.sh lib/rcsplice.sh lib/backend.sh \
-        lib/backends/generic.sh lib/backends/ghostty.sh lib/backends/foot.sh \
-        lib/sinks/splashboard.sh lib/doctor.sh lib/install.sh lib/main.sh
+# GNU tar is required: the payload is normalised with --sort/--mtime/--owner/--mode,
+# which bsdtar (macOS) does not have. Homebrew installs it as `gtar`.
+TAR ?= $(shell command -v gtar 2>/dev/null || echo tar)
+
+# One source list, read here and by bin/color-terminal, so the artifact and the
+# checkout cannot disagree about what the tool is made of. Order is load-bearing.
+LIBS := $(shell sed -e 's/\#.*//' -e '/^[[:space:]]*$$/d' lib/manifest)
+PAYLOAD := $(wildcard themes/*.theme) $(wildcard shell/*.in)
 
 .PHONY: all dist lint test test-live test-terminals golden themes docs install uninstall clean
+# A recipe that fails must not leave its target behind: the dist recipe writes the
+# code half first and the payload second, and a half-written artifact that make then
+# considers up to date is exactly the hollow file this rule exists to prevent.
+.DELETE_ON_ERROR:
 
 all: dist
 
 dist: $(DIST)
 
-$(DIST): $(LIBS)
+$(DIST): $(LIBS) $(PAYLOAD) lib/manifest Makefile
+	@$(TAR) --version 2>/dev/null | grep -q 'GNU tar' \
+	  || { echo "dist: needs GNU tar for a reproducible payload (found: $$($(TAR) --version 2>&1 | head -1)). On macOS: brew install gnu-tar" >&2; exit 1; }
 	@mkdir -p dist
 	@{ \
 	  echo '#!/usr/bin/env bash'; \
@@ -41,27 +52,36 @@ $(DIST): $(LIBS)
 	@# raw file that installs with download -> verify -> chmod and nothing else.
 	@echo '#__CT_PAYLOAD__' >> $(DIST)
 	@# Normalised so the artifact is REPRODUCIBLE: plain `tar czf` records each file's
-	@# mtime and the builder's uid/gid, and git rewrites mtimes on every fresh clone, so
-	@# CI and a laptop would produce different bytes for identical source. Publishing a
-	@# sha256 only means something if anyone can rebuild the file and get the same one.
-	@tar --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner -cf - themes shell \
+	@# mtime, the builder's uid/gid AND each file's mode, and git rewrites mtimes on
+	@# every fresh clone while umask decides the mode — so CI and a laptop would build
+	@# different bytes from identical source. Publishing a sha256 only means something
+	@# if anyone can rebuild the file and get the same one.
+	@#   --mode: a-x first strips whatever the checkout had, then u=rwX,go=rX gives
+	@#   files 644 and directories 755 whatever the umask was. X is x-if-directory.
+	@$(TAR) --sort=name --mtime=@0 --owner=0 --group=0 --numeric-owner \
+	    --mode='a-x,u=rwX,go=rX' -cf - themes shell \
 	  | gzip -n | base64 >> $(DIST)
 	@chmod +x $(DIST)
 	@bash -n $(DIST) && echo "dist: $(DIST) ($$(wc -l < $(DIST)) lines, $$(wc -c < $(DIST)) bytes)"
 
 lint:
 	@fail=0; \
-	for f in bin/color-terminal install.sh $(LIBS); do bash -n "$$f" || fail=1; done; \
+	for f in lib/*.sh lib/backends/*.sh lib/sinks/*.sh; do \
+	  case " $(LIBS) " in *" $$f "*) ;; *) echo "lint: $$f exists but is not listed in lib/manifest"; fail=1 ;; esac; \
+	done; \
+	for f in bin/color-terminal install.sh test/ci-gate.sh $(LIBS); do bash -n "$$f" || fail=1; done; \
 	bash -n shell/color-terminal.bash.in || fail=1; \
 	command -v zsh >/dev/null && { zsh -n shell/color-terminal.zsh.in || fail=1; }; \
-	sh -n docs/install.sh || fail=1; \
-	command -v dash >/dev/null && { dash -n docs/install.sh || fail=1; }; \
+	sh -n docs/install.sh test/ci-gate.sh || fail=1; \
+	command -v dash >/dev/null && { dash -n docs/install.sh && dash -n test/ci-gate.sh || fail=1; }; \
 	if command -v shellcheck >/dev/null; then \
 	  shellcheck -x -S warning bin/color-terminal install.sh $(LIBS) || fail=1; \
-	  shellcheck -s sh -S warning docs/install.sh || fail=1; \
+	  shellcheck -s sh -S warning docs/install.sh test/ci-gate.sh || fail=1; \
 	else echo "lint: shellcheck NOT INSTALLED (pacman -S shellcheck). This is the weak"; \
 	     echo "lint: gate — CI runs the strong one and WILL fail on what this misses."; fi; \
+	python3 -m py_compile tools/*.py || fail=1; \
 	python3 tools/validate-themes.py || fail=1; \
+	python3 tools/check-site.py docs/index.html || fail=1; \
 	exit $$fail
 
 test: dist
@@ -79,11 +99,12 @@ golden:
 themes:
 	@tools/import-scheme.sh --all
 
-# The three generated sections of the website, rebuilt from themes/*.theme. CI runs
-# this and fails if the page changes, so the swatches on the web are always the colours
-# the tool actually ships.
+# The generated sections of the website, rebuilt from themes/ and the backend
+# registry. CI runs this and fails if the page changes, so the swatches and the
+# terminal tiers on the web are always what the tool actually ships.
 docs:
 	@python3 tools/gen-site.py
+	@python3 tools/check-site.py docs/index.html
 
 install: dist
 	@./install.sh

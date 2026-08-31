@@ -1,17 +1,23 @@
 #!/usr/bin/env python3
-"""Fill the generated sections of docs/index.html from the theme corpus.
+"""Fill the generated sections of docs/index.html from the code, not from memory.
 
 docs/README.md reserves three slots in the page and defines the contract: replace
 everything BETWEEN a `<!-- ct:generated:NAME BEGIN -->` marker and its matching END,
 leave both markers in place, and emit one complete <section>.
 
-The gallery in particular must be generated rather than written by hand. docs/README.md
-forbids invented hex values on the page, because a swatch that is not real theme data
-misrepresents what the tool actually does. Reading themes/*.theme is the only way to
-keep that true as the corpus changes.
+Two of the three sections are derived from the repository so they cannot drift from
+what ships:
 
-Idempotent by construction: CI runs this and fails if the page changes, so a theme
-added or renamed without regenerating is caught at review time rather than on the web.
+  gallery  — every swatch is painted with values read out of themes/*.theme by the
+             same parser the validator uses. docs/README.md forbids invented hex on
+             the page, because a swatch that is not real theme data misrepresents
+             what the tool does.
+  support  — the tier-1 and tier-3 terminal lists come from CT_BACKENDS in
+             lib/backend.sh and the `# tier:` / `# name:` header of each backend file.
+             The site once advertised a tier 3 that no backend implemented; CI could
+             not catch it because the table was a string constant. Now it can.
+
+Idempotent by construction: CI runs this and fails if the page changes.
 
     make docs        # or: python3 tools/gen-site.py
 """
@@ -20,28 +26,36 @@ import pathlib
 import re
 import sys
 
+from themeparse import ThemeError, parse_theme
+
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 PAGE = ROOT / "docs" / "index.html"
 THEMES = ROOT / "themes"
-
-
-def read_theme(path):
-    """Parse one .theme file. Same flat key = value format lib/theme.sh parses, and
-    like it we parse rather than execute: a theme is data, never code."""
-    out = {}
-    for line in path.read_text().splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if "=" not in line:
-            continue
-        k, v = line.split("=", 1)
-        out[k.strip()] = v.strip()
-    return out
+BACKENDS = ROOT / "lib" / "backends"
 
 
 def esc(s):
     return html.escape(str(s), quote=True)
+
+
+def read_backends():
+    """[(id, tier, display name)] in CT_BACKENDS order, from the backend files."""
+    src = (ROOT / "lib" / "backend.sh").read_text()
+    m = re.search(r"^CT_BACKENDS=\(([^)]*)\)", src, re.M)
+    if not m:
+        sys.exit("gen-site: cannot find CT_BACKENDS=(...) in lib/backend.sh")
+    out = []
+    for bid in m.group(1).split():
+        path = BACKENDS / f"{bid}.sh"
+        if not path.exists():
+            sys.exit(f"gen-site: CT_BACKENDS names '{bid}' but {path} does not exist")
+        text = path.read_text()
+        tier = re.search(r"^# tier: ([123])\s*$", text, re.M)
+        name = re.search(r"^# name: (.+?)\s*$", text, re.M)
+        if not tier or not name:
+            sys.exit(f"gen-site: {path} needs '# tier: N' and '# name: ...' header lines")
+        out.append((bid, int(tier.group(1)), name.group(1)))
+    return out
 
 
 def gen_triggers():
@@ -75,7 +89,14 @@ def gen_triggers():
 
 
 def gen_support():
-    return """<section id="support">
+    backends = read_backends()
+    tier1 = [n for _, t, n in backends if t == 1]
+    tier3 = [n for _, t, n in backends if t == 3]
+    if not tier1 or not tier3 or sum(1 for _, t, _ in backends if t == 2) != 1:
+        sys.exit("gen-site: expected tier-1 backends, tier-3 backends and exactly one tier-2 (generic)")
+    t1 = ", ".join(f"<code>{esc(n)}</code>" for n in tier1)
+    t3 = ", ".join(esc(n) for n in tier3)
+    return f"""<section id="support">
       <h2>Which terminals</h2>
       <p>
         There are three tiers, and the third one is a feature rather than a gap.
@@ -87,7 +108,7 @@ def gen_support():
             <tr>
               <td><strong>1</strong></td>
               <td>live recolour, plus a palette file so new windows keep the theme</td>
-              <td><code>ghostty</code>, <code>foot</code></td>
+              <td>{t1}</td>
             </tr>
             <tr>
               <td><strong>2</strong></td>
@@ -102,7 +123,7 @@ def gen_support():
             <tr>
               <td><strong>3</strong></td>
               <td>detected, declined, and told why</td>
-              <td>konsole, Warp, mosh, Apple Terminal</td>
+              <td>{t3}</td>
             </tr>
           </tbody>
         </table>
@@ -117,7 +138,7 @@ def gen_support():
         nothing &mdash; it <em>looks</em> like it worked. konsole parses the palette
         sequence, stores it, answers queries about it, and never renders with it; Warp
         ignores it; mosh drops it; Apple Terminal has no palette sequence at all.
-        Run <code>color-terminal --doctor</code> to see which one you are in.
+        Run <code>color-terminal --doctor</code> to see which one you are in, and why.
       </p>
     </section>"""
 
@@ -125,10 +146,14 @@ def gen_support():
 def gen_gallery():
     themes = []
     for path in sorted(THEMES.glob("*.theme")):
-        t = read_theme(path)
+        try:
+            t = parse_theme(path)
+        except ThemeError as e:
+            sys.exit(f"gen-site: {e}")
         need = ["name", "variant", "background", "foreground"]
-        if not all(k in t for k in need):
-            sys.exit(f"gen-site: {path.name} is missing one of {need}")
+        missing = [k for k in need if k not in t]
+        if missing:
+            sys.exit(f"gen-site: {path.name} is missing {missing}")
         themes.append((path.stem, t))
 
     dark = sum(1 for _, t in themes if t["variant"] == "dark")
@@ -136,8 +161,8 @@ def gen_gallery():
 
     cards = []
     for tid, t in themes:
-        # Eight swatches: the ANSI colours a prompt and a diff actually use. The
-        # values come straight from the theme file — see the module docstring.
+        # Six swatches: the ANSI colours a prompt and a diff actually use. Values come
+        # straight from the theme file — see the module docstring.
         chips = "".join(
             f'<i style="background:{esc(t.get("color%d" % n, t["foreground"]))}"></i>'
             for n in range(1, 7)
@@ -150,6 +175,11 @@ def gen_gallery():
             f"          </figure>"
         )
 
+    # Joined outside the f-string: a backslash inside an f-string expression is a
+    # SyntaxError before Python 3.12, and CI's 3.12 would hide that from everyone
+    # on Debian 12 or Ubuntu 22.04.
+    sep = "\n          "
+    body = sep.join(cards)
     return f"""<section id="themes">
       <h2>The corpus</h2>
       <p>
@@ -160,7 +190,7 @@ def gen_gallery():
         and an upgrade never touches it.
       </p>
       <div class="gallery">
-          {"\n          ".join(cards)}
+          {body}
       </div>
     </section>"""
 
@@ -173,15 +203,11 @@ def main():
     for name, gen in SLOTS.items():
         begin = f"<!-- ct:generated:{name} BEGIN -->"
         end = f"<!-- ct:generated:{name} END -->"
-        pattern = re.compile(
-            re.escape(begin) + r".*?" + re.escape(end), re.DOTALL
-        )
+        pattern = re.compile(re.escape(begin) + r".*?" + re.escape(end), re.DOTALL)
         if not pattern.search(page):
             sys.exit(f"gen-site: no {name} slot in {PAGE}")
         body = gen()
-        page = pattern.sub(
-            lambda _m, b=body: f"{begin}\n    {b}\n    {end}", page, count=1
-        )
+        page = pattern.sub(lambda _m, b=body: f"{begin}\n    {b}\n    {end}", page, count=1)
     PAGE.write_text(page)
     print(f"gen-site: filled {', '.join(SLOTS)} in docs/index.html")
 

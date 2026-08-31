@@ -1,6 +1,8 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
 # shellcheck disable=SC2034
+# tier: 1
+# name: ghostty
 # ghostty — tier 1. The incumbent backend and the author's daily driver.
 #
 # Capability notes, verified against ghostty 1.3.1:

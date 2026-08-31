@@ -3,7 +3,7 @@ name: pages
 on:
   push:
     branches: [main]
-    paths: ['docs/**', '.github/workflows/pages.yml']
+    paths: ['docs/**', 'themes/**', 'tools/gen-site.py', 'tools/themeparse.py', 'tools/check-site.py', 'lib/backend.sh', 'lib/backends/**', '.github/workflows/pages.yml']
   workflow_dispatch:
 
 permissions:
@@ -17,9 +17,8 @@ concurrency:
 
 jobs:
   deploy:
-    # Pages is not enabled on a private repository without a paid plan, so this
-    # would go red on every push to main until the repo is public. Skip until
-    # then; `enablement: true` below lets it configure itself when it runs.
+    # Pages cannot be enabled on a private repository without a paid plan. Kept even
+    # now the repo is public: it costs nothing and documents the dependency.
     if: ${{ github.event.repository.private == false }}
     environment:
       name: github-pages
@@ -27,10 +26,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      # No build step on purpose: docs/index.html is a single self-contained file
-      # with no dependencies beyond what a browser already has, matching the
-      # project's own "one file, no toolchain" posture. The file that is committed
-      # is byte-for-byte the file that is served.
+
+      # The site's own gate, run HERE, before upload. This workflow has no dependency
+      # on ci.yml — it cannot, because workflow_run has no paths filter — so a docs
+      # push used to deploy whatever it contained while ci went red afterwards. And
+      # docs/install.sh is the file every `curl … | sh` executes.
+      - name: Install deps
+        run: |
+          set -eu
+          sudo apt-get update
+          sudo apt-get install -y shellcheck dash
+      - name: Gate the site
+        run: |
+          set -eu
+          make docs
+          git diff --exit-code -- docs/index.html \
+            || { echo "FAIL: docs/index.html is stale — run 'make docs' and commit"; exit 1; }
+          python3 tools/check-site.py docs/index.html
+          sh -n docs/install.sh
+          dash -n docs/install.sh
+          shellcheck -s sh -S warning docs/install.sh
+
+      # No build step on purpose: docs/ is served byte-for-byte as committed.
       - uses: actions/configure-pages@v5
         with:
           enablement: true

@@ -14,6 +14,8 @@
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 REPO=$PWD
+# Derived, never hardcoded: a theme added or dropped must not fail five gates at once.
+NTHEMES=$(ls "$REPO"/themes/*.theme | wc -l)
 PASS=0 FAIL=0
 FAILED=()
 
@@ -134,7 +136,7 @@ from faketerm import run, oscs, assert_clean_stdout
 argv = sys.argv[1:]
 split = argv.index("--")
 env = dict(os.environ)
-for k in ("GHOSTTY_RESOURCES_DIR","TERM_PROGRAM","TMUX","STY","ZELLIJ","SSH_CONNECTION","SSH_TTY","NO_COLOR","COLOR_TERMINAL"):
+for k in ("GHOSTTY_RESOURCES_DIR","TERM_PROGRAM","KONSOLE_VERSION","TMUX","STY","ZELLIJ","SSH_CONNECTION","SSH_TTY","SSH_CLIENT","NO_COLOR","COLOR_TERMINAL"):
     env.pop(k, None)
 for a in argv[:split]:
     k, v = a.split("=", 1); env[k] = v
@@ -169,7 +171,7 @@ sys.path.insert(0, "test")
 from faketerm import run
 argv = sys.argv[1:]; split = argv.index("--")
 env = dict(os.environ)
-for k in ("GHOSTTY_RESOURCES_DIR","TERM_PROGRAM","TMUX","STY","ZELLIJ","NO_COLOR","COLOR_TERMINAL"):
+for k in ("GHOSTTY_RESOURCES_DIR","TERM_PROGRAM","KONSOLE_VERSION","TMUX","STY","ZELLIJ","SSH_CONNECTION","SSH_TTY","SSH_CLIENT","NO_COLOR","COLOR_TERMINAL"):
     env.pop(k, None)
 for a in argv[:split]:
     k, v = a.split("=", 1); env[k] = v
@@ -188,13 +190,51 @@ has "screen: inner terminator is BEL, not ESC-backslash"   "$raw" '#3b4252\x07\x
 
 section "L3 matrix — terminals that are not installed here"
 
-detect() { HOME="$H" XDG_RUNTIME_DIR="$H/run" env -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM -u TMUX -u STY -u SSH_CONNECTION -u SSH_TTY "$@" "$REPO/bin/color-terminal" --print-detected; }
+# The suite runs inside a real terminal, whose own identity would otherwise leak into
+# every detection test. Strip everything a backend keys on, then set what the test says.
+clean_env() { env -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM -u KONSOLE_VERSION -u TMUX -u STY -u ZELLIJ -u SSH_CONNECTION -u SSH_TTY -u SSH_CLIENT -u NO_COLOR -u COLOR_TERMINAL "$@"; }
+detect() { HOME="$H" XDG_RUNTIME_DIR="$H/run" clean_env "$@" "$REPO/bin/color-terminal" --print-detected; }
 is "ghostty via its private env var"     "$(detect GHOSTTY_RESOURCES_DIR=/usr/share/ghostty TERM=xterm-ghostty)" "ghostty local certain"
 is "ghostty via TERM alone is not local" "$(detect TERM=xterm-ghostty)"                                          "ghostty remote probable"
 is "foot via TERM_PROGRAM"               "$(detect TERM=foot TERM_PROGRAM=foot)"                                 "foot local certain"
 is "unknown terminal falls back to generic, and that is correct" "$(detect TERM=xterm-256color)"                 "generic remote guess"
 is "over ssh a private env var no longer proves locality" "$(detect TERM=xterm-ghostty GHOSTTY_RESOURCES_DIR=/usr/share/ghostty SSH_CONNECTION='1 2 3 4')" "ghostty remote probable"
 is "explicit override wins"              "$(detect TERM=xterm-256color COLOR_TERMINAL_TERM=kitty)"               "kitty local override"
+is "konsole via its private env var (tier 3)"   "$(detect TERM=xterm-256color KONSOLE_VERSION=240800)"          "konsole local certain"
+is "Warp via TERM_PROGRAM (tier 3)"             "$(detect TERM=xterm-256color TERM_PROGRAM=WarpTerminal)"       "warp local certain"
+is "Apple Terminal via TERM_PROGRAM (tier 3)"   "$(detect TERM=xterm-256color TERM_PROGRAM=Apple_Terminal)"     "appleterminal local certain"
+# KONSOLE_VERSION is inherited by a terminal opened FROM konsole; TERM_PROGRAM is not,
+# every terminal overwrites it. The innermost terminal has to win.
+is "a ghostty opened from inside konsole is ghostty" "$(detect TERM=xterm-ghostty KONSOLE_VERSION=240800 TERM_PROGRAM=ghostty)" "ghostty local certain"
+
+# mosh has no env var: it is found because mosh-server is an ancestor of the shell.
+# comm in /proc comes from the executable's name, so a copy of bash called
+# mosh-server is one. The trailing `; :` makes bash fork for the command instead of
+# exec'ing over the ancestor we are trying to be.
+cp "$(command -v bash)" "$SANDBOX/mosh-server"
+mosh_detect() {                               # <VAR=value...>
+    HOME="$H" XDG_RUNTIME_DIR="$H/run" "$SANDBOX/mosh-server" -c \
+        'env -u GHOSTTY_RESOURCES_DIR -u TERM_PROGRAM -u KONSOLE_VERSION -u TMUX -u STY -u SSH_CONNECTION -u SSH_TTY -u SSH_CLIENT "$@" "$0" --print-detected; :' \
+        "$REPO/bin/color-terminal" "$@"
+}
+is "mosh: found by ancestry, and it beats the ghostty TERM match" "$(mosh_detect SSH_CONNECTION='1 2 3 4' TERM=xterm-ghostty)" "mosh remote certain"
+is "mosh: the ancestry walk is gated on an ssh session"          "$(mosh_detect TERM=xterm-ghostty)"                         "ghostty remote probable"
+
+section "tier 3 — identified, declined, and told why"
+
+newhome
+out=$(pty_oscs TERM=xterm-256color KONSOLE_VERSION=240800 HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
+is "konsole: a swap emits no escape at all"        "$out" ""
+out=$(pty_oscs TERM=xterm-256color TERM_PROGRAM=WarpTerminal HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
+is "Warp: a swap emits no escape at all"           "$out" ""
+out=$(pty_oscs TERM=xterm-256color TERM_PROGRAM=Apple_Terminal HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --reset)
+is "Apple Terminal: --reset emits nothing either"  "$out" ""
+n=$([ -f "$H/.local/state/color-terminal/history" ] && wc -l < "$H/.local/state/color-terminal/history" || echo 0)
+is "declining records no history"                  "$n" "0"
+rc=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" clean_env KONSOLE_VERSION=240800 TERM=xterm-256color "$REPO/bin/color-terminal" --theme nord >/dev/null 2>&1; echo $?)
+is "a declined swap exits 0 — declining is not an error" "$rc" "0"
+out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" clean_env KONSOLE_VERSION=240800 TERM=xterm-256color "$REPO/bin/color-terminal" --doctor 2>&1)
+has "--doctor says it is declining, and why"       "$out" "VERDICT      : declining — konsole"
 
 section "L1 unit — opt-outs"
 
@@ -260,7 +300,7 @@ cp "$REPO/dist/color-terminal" "$ISO/elsewhere/color-terminal"
 printf 'export PATH="$HOME/.local/bin:$PATH"\n\n# >>> splashboard >>>\nsplash\n# <<< splashboard <<<\n' > "$ISO/.zshrc"
 ( cd "$ISO/elsewhere" && HOME="$ISO" XDG_RUNTIME_DIR="$ISO/run" CT_QUIET=1 ./color-terminal --install ) >/dev/null 2>&1
 n=$(ls "$ISO/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
-is "one file installs all 24 themes with no checkout present" "$n" "24"
+is "one file installs all $NTHEMES themes with no checkout present" "$n" "$NTHEMES"
 [ -x "$ISO/.local/bin/color-terminal" ] && ok "one file installs the binary" || nope "one file installs the binary"
 [ -r "$ISO/.config/color-terminal/hook.zsh" ] && ok "one file generates the shell hooks" || nope "one file generates the shell hooks"
 hookline=$(grep -n 'color-terminal hook' "$ISO/.zshrc" | head -1 | cut -d: -f1)
@@ -289,6 +329,52 @@ else
     nope "--uninstall is complete"
 fi
 
+section "opt-outs do not block administration"
+
+# NO_COLOR means "do not recolour". It is exported globally by exactly the people who
+# care about it most, and it must not stop them installing, and above all not stop
+# them uninstalling.
+newhome; rm -rf "$H/.local/share/color-terminal"
+NO_COLOR=1 ctd --install --no-wire --prefix="$H/.local" >/dev/null 2>&1
+n=$(ls "$H/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+is "NO_COLOR=1: --install still installs"                     "$n" "$NTHEMES"
+[ -r "$H/.config/color-terminal/hook.zsh" ] && ok "NO_COLOR=1: --install still generates the hooks" || nope "NO_COLOR=1: hooks" "hook.zsh missing"
+COLOR_TERMINAL=0 ctd --uninstall >/dev/null 2>&1
+[ ! -e "$H/.local/bin/color-terminal" ] && ok "COLOR_TERMINAL=0: --uninstall still uninstalls" || nope "COLOR_TERMINAL=0: --uninstall" "binary still present"
+out=$(NO_COLOR=1 pty_oscs TERM=xterm-ghostty NO_COLOR=1 HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
+is "NO_COLOR=1: but a swap still emits nothing"               "$out" ""
+
+section "dev entrypoint — bin/color-terminal is the whole tool too"
+
+# bin/ and dist/ read the same lib/manifest, so a function the artifact has, the
+# checkout has. --install is the one that was missing.
+newhome; rm -rf "$H/.local/share/color-terminal"
+ct --install --no-wire --prefix="$H/.local" >/dev/null 2>&1
+[ -x "$H/.local/bin/color-terminal" ] && ok "bin/color-terminal --install works from a checkout" || nope "bin --install" "no binary installed"
+n=$(ls "$H/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
+is "…and finds the themes in the checkout, no payload needed" "$n" "$NTHEMES"
+
+section "reproducible build"
+
+# A copy of the source with every mtime moved by 25 years, group-writable files (a
+# umask-002 clone), and an executable theme: none of it may change the artifact,
+# because a published sha256 only means something if anyone can rebuild it.
+B="$SANDBOX/build$RANDOM"; mkdir -p "$B"
+( cd "$REPO" && tar -cf - Makefile lib bin themes shell | tar -xf - -C "$B" )
+find "$B" -exec touch -t 200102030405 {} +
+chmod -R g+w "$B/themes" "$B/shell"; chmod +x "$B/themes/nord.theme"
+if ( umask 002; make -s -C "$B" dist >/dev/null 2>&1 ) && cmp -s "$B/dist/color-terminal" "$REPO/dist/color-terminal"; then
+    ok "mtimes, umask and stray mode bits do not change the artifact"
+else nope "reproducible build" "$(sha256sum "$B/dist/color-terminal" "$REPO/dist/color-terminal" 2>&1 | cut -c1-16 | tr '\n' ' ')"; fi
+
+# A tar that starts and then fails must fail the build — not append an empty payload
+# and exit 0, which is how a Mac would install zero themes.
+printf '#!/bin/sh\ncase "$1" in --version) echo "tar (GNU tar) 1.35";; *) exit 1;; esac\n' > "$B/faketar"; chmod +x "$B/faketar"
+rm -rf "$B/dist"
+if make -s -C "$B" dist TAR="$B/faketar" >/dev/null 2>&1; then nope "a failing tar fails make dist" "make dist exited 0"
+else ok "a failing tar fails make dist instead of shipping an empty payload"; fi
+[ ! -e "$B/dist/color-terminal" ] && ok "…and leaves no half-written artifact behind" || nope "no half-written artifact" "dist/color-terminal exists after a failed build"
+
 section "public installer — the headline install command"
 
 # docs/install.sh is what `curl … | sh` runs, so it is part of the product and gets
@@ -296,57 +382,83 @@ section "public installer — the headline install command"
 # SHA256SUMS format, same asset name, same code path.
 #
 # This is the one layer that needs more than bash and python3, because fetching is the
-# thing under test. Skipping is announced rather than silent: a run that quietly covers
-# one section fewer while printing the same "all passed" is worse than one that says so.
-if command -v curl >/dev/null 2>&1 || command -v wget >/dev/null 2>&1; then
+# thing under test — and specifically curl: wget cannot fetch file://. Skipping is
+# announced rather than silent: a run that quietly covers one section fewer while
+# printing the same "all passed" is worse than one that says so.
+if command -v curl >/dev/null 2>&1; then
 
-newhome
-REL="$SANDBOX/release$RANDOM"; mkdir -p "$REL"
-cp "$REPO/dist/color-terminal" "$REL/color-terminal"
-( cd "$REL" && sha256sum color-terminal > SHA256SUMS )
+sha_of() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
+mkrelease() {                                 # <dir> [extra asset names already in dir...]
+    local d=$1; shift
+    mkdir -p "$d"; cp "$REPO/dist/color-terminal" "$d/color-terminal"
+    ( cd "$d" && { for f in color-terminal "$@"; do printf '%s  %s\n' "$(sha_of "$f")" "$f"; done; } > SHA256SUMS )
+}
+inst() {                                      # <release-dir> [bootstrap args...]
+    local rel=$1; shift
+    HOME="$H" XDG_RUNTIME_DIR="$H/run" CT_QUIET=1 COLOR_TERMINAL_DOWNLOAD_BASE="file://$rel" \
+        sh "$REPO/docs/install.sh" --no-wire --prefix="$H/.local" "$@" 2>&1
+}
+DISTVER=$("$REPO/dist/color-terminal" --version | awk '{print $2}')
 
-out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" PREFIX="$H/.local" CT_QUIET=1 \
-      COLOR_TERMINAL_DOWNLOAD_BASE="file://$REL" \
-      sh "$REPO/docs/install.sh" --no-wire 2>&1) || true
-
-if [ -x "$H/.local/bin/color-terminal" ]; then ok "installer: fetches, verifies and installs the artifact"
-else nope "installer: installs the artifact" "$out"; fi
-
+REL="$SANDBOX/release$RANDOM"; mkrelease "$REL"
+newhome; rm -rf "$H/.local/share/color-terminal"      # the pre-seeded corpus would make the count vacuous
+out=$(inst "$REL") || true
+[ -x "$H/.local/bin/color-terminal" ] && ok "installer: fetches, verifies and installs the artifact" || nope "installer: installs the artifact" "$out"
 n=$(ls "$H/.local/share/color-terminal/themes"/*.theme 2>/dev/null | wc -l)
-is "installer: hands over to --install, which unpacks the payload" "$n" "24"
+is "installer: hands over to --install, which unpacks the payload" "$n" "$NTHEMES"
+[ -r "$H/.config/color-terminal/hook.zsh" ] && ok "installer: …and the hooks are generated" || nope "installer: hooks" "hook.zsh missing"
+
+newhome; rm -rf "$H/.local"
+out=$(inst "$REL" --dry-run) || true
+[ ! -e "$H/.local/bin/color-terminal" ] && [ ! -d "$H/.local/share/color-terminal" ] && [ ! -e "$H/.config/color-terminal/config" ] \
+    && ok "installer: --dry-run writes nothing at all" || nope "installer: --dry-run is dry" "something was written"
+newhome; rm -rf "$H/.local"
+out=$(inst "$REL" --version) || true
+has "installer: --version reports the release"      "$out" "color-terminal $DISTVER"
+[ ! -e "$H/.local/bin/color-terminal" ] && ok "installer: --version installs nothing" || nope "installer: --version installs nothing" "binary present"
+
+newhome; rm -rf "$H/.local"
+out=$(inst "$REL" --prefix "$H/opt") || true
+[ -x "$H/opt/bin/color-terminal" ] && [ ! -e "$H/.local/bin/color-terminal" ] \
+    && ok "installer: the space form of --prefix works, and installs exactly one copy" || nope "installer: --prefix DIR" "$out"
 
 # The check that matters. A corrupted download must not become executable anywhere,
 # and the installer must say so rather than installing something that half works.
-newhome
-BAD="$SANDBOX/bad$RANDOM"; mkdir -p "$BAD"
-cp "$REPO/dist/color-terminal" "$BAD/color-terminal"
-( cd "$BAD" && sha256sum color-terminal > SHA256SUMS )
-printf 'x' >> "$BAD/color-terminal"           # one byte, after the checksum was taken
-
-out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" PREFIX="$H/.local" \
-      COLOR_TERMINAL_DOWNLOAD_BASE="file://$BAD" \
-      sh "$REPO/docs/install.sh" --no-wire 2>&1); rc=$?
+newhome; rm -rf "$H/.local"
+BAD="$SANDBOX/bad$RANDOM"; mkrelease "$BAD"; printf 'x' >> "$BAD/color-terminal"
+out=$(inst "$BAD"); rc=$?
 is   "installer: a tampered artifact is refused"        "$rc" "1"
 has  "installer: and says why"                          "$out" "CHECKSUM MISMATCH"
-if [ ! -e "$H/.local/bin/color-terminal" ]; then ok "installer: nothing executable is left behind"
-else nope "installer: nothing executable is left behind" "$H/.local/bin/color-terminal exists"; fi
+[ ! -e "$H/.local/bin/color-terminal" ] && ok "installer: nothing executable is left behind" || nope "installer: nothing left behind" "$H/.local/bin/color-terminal exists"
 
 # SHA256SUMS is matched by asset name, not positionally, so a release that later grows
 # a second asset does not break installers already in the wild.
-newhome
-MULTI="$SANDBOX/multi$RANDOM"; mkdir -p "$MULTI"
-cp "$REPO/dist/color-terminal" "$MULTI/color-terminal"
-echo 'unrelated' > "$MULTI/some-other-asset"
-( cd "$MULTI" && sha256sum some-other-asset color-terminal > SHA256SUMS )
-out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" CT_QUIET=1 \
-      COLOR_TERMINAL_DOWNLOAD_BASE="file://$MULTI" \
-      sh "$REPO/docs/install.sh" --download-only="$H/ct" 2>&1) || true
-if [ -x "$H/ct" ]; then ok "installer: --download-only verifies against a multi-asset SHA256SUMS"
-else nope "installer: --download-only with extra assets" "$out"; fi
+MULTI="$SANDBOX/multi$RANDOM"; mkdir -p "$MULTI"; echo unrelated > "$MULTI/some-other-asset"; mkrelease "$MULTI" some-other-asset
+out=$(HOME="$H" COLOR_TERMINAL_DOWNLOAD_BASE="file://$MULTI" sh "$REPO/docs/install.sh" --download-only="$H/ct" 2>&1) || true
+[ -x "$H/ct" ] && ok "installer: --download-only verifies against a multi-asset SHA256SUMS" || nope "installer: --download-only" "$out"
+
+# One version token, two spellings, two planes: GitHub wants the v, the LAN index
+# does not. Both spellings must resolve on both.
+url=$(sh "$REPO/docs/install.sh" --print-url 2.0.0);  has "installer: bare 2.0.0 becomes a v-tag on GitHub" "$url" "/releases/download/v2.0.0/color-terminal"
+url=$(sh "$REPO/docs/install.sh" --print-url v2.0.0); has "installer: v2.0.0 stays a v-tag on GitHub"      "$url" "/releases/download/v2.0.0/color-terminal"
+url=$(COLOR_TERMINAL_VERSION=v2.0.0 sh "$REPO/docs/install.sh" --print-url); has "installer: COLOR_TERMINAL_VERSION is honoured" "$url" "/download/v2.0.0/"
+APPS="$SANDBOX/apps$RANDOM"; mkdir -p "$APPS/tools/color-terminal/latest"; cp "$REPO/dist/color-terminal" "$APPS/tools/color-terminal/latest/"
+printf 'tool\tcolor-terminal\t%s\tcolor-terminal\t%s\t%s\ttools/color-terminal/latest/color-terminal\n' \
+    "$DISTVER" "$(sha_of "$REPO/dist/color-terminal")" "$(wc -c < "$REPO/dist/color-terminal")" > "$APPS/index.tsv"
+for v in "v$DISTVER" "$DISTVER" latest; do
+    url=$(APPS_URL="file://$APPS" sh "$REPO/docs/install.sh" --source=apps --print-url "$v" 2>&1)
+    has "installer: --source=apps resolves '$v' through the index" "$url" "/latest/color-terminal"
+done
+newhome; rm -rf "$H/.local"
+out=$(HOME="$H" XDG_RUNTIME_DIR="$H/run" CT_QUIET=1 APPS_URL="file://$APPS" sh "$REPO/docs/install.sh" --source=apps --no-wire --prefix="$H/.local" 2>&1) || true
+[ -x "$H/.local/bin/color-terminal" ] && ok "installer: --source=apps installs, verified by the index's own sha256" || nope "installer: --source=apps" "$out"
+
+# Piped through sh there is no $0 to read help out of, so it has to be a heredoc.
+out=$(cat "$REPO/docs/install.sh" | sh -s -- --help)
+has "installer: --help works when piped"  "$out" "Options"
 
 else
-    printf '  \033[33mSKIP\033[0m neither curl nor wget is installed — the public installer\n'
-    printf '       was NOT covered by this run\n'
+    printf '  \033[33mSKIP\033[0m curl is not installed — the public installer was NOT covered by this run\n'
 fi
 
 section "golden — rendered config fragments"

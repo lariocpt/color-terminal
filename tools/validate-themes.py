@@ -29,7 +29,6 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 THEME_DIR = REPO_ROOT / "themes"
 
 COLOR_RE = re.compile(r"^#[0-9a-f]{6}$")
-KEY_RE = re.compile(r"^[a-z0-9-]+$")
 
 PALETTE_KEYS = [f"color{i}" for i in range(16)]
 REQUIRED_KEYS = ["name", "variant", "background", "foreground"] + PALETTE_KEYS
@@ -67,31 +66,10 @@ REST_KEYS = ["color2", "color4", "color5", "color6"]
 # actually carry meaning (foreground, and red for errors) keep their full bars.
 
 
-class ThemeError(Exception):
-    pass
-
-
-def parse_theme(path: Path) -> dict[str, str]:
-    """Parse one .theme file into a flat dict, mirroring the bash loader."""
-    data: dict[str, str] = {}
-    text = path.read_text(encoding="utf-8")
-    for lineno, raw in enumerate(text.splitlines(), start=1):
-        line = raw.strip()
-        if not line:
-            continue
-        # Comment test is on the FIRST non-blank character only. A "#" later in
-        # the line is data — it is how every colour value starts.
-        if line[0] == "#":
-            continue
-        if "=" not in line:
-            raise ThemeError(f"line {lineno}: not a comment and has no '=': {raw!r}")
-        key, _, value = line.partition("=")
-        key = key.strip()
-        value = value.strip()
-        if not KEY_RE.match(key):
-            raise ThemeError(f"line {lineno}: key {key!r} does not match [a-z0-9-]+")
-        data[key] = value
-    return data
+# The parser lives in themeparse.py so the website generator reads the corpus with
+# EXACTLY the same rules as this validator. Re-exported here because the report code
+# below and older callers refer to them by these names.
+from themeparse import KEY_RE, ThemeError, parse_theme  # noqa: E402,F401
 
 
 def srgb_to_linear(channel: int) -> float:

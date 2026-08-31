@@ -10,14 +10,14 @@
 set -uo pipefail
 
 CT_REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CT_LIB="$CT_REPO_DIR/lib"
 
-# shellcheck source=/dev/null
-for f in common config theme pick state detect emit rcsplice backend doctor main; do
-    . "$CT_LIB/$f.sh"
-done
-# shellcheck source=/dev/null
-for f in "$CT_LIB"/backends/*.sh "$CT_LIB"/sinks/*.sh; do . "$f"; done
+# The same list `make dist` concatenates, in the same order, read from the same file,
+# so the checkout and the artifact cannot disagree about what the tool is made of.
+while IFS= read -r f; do
+    case "$f" in ''|'#'*) continue ;; esac
+    # shellcheck source=/dev/null
+    . "$CT_REPO_DIR/$f"
+done < "$CT_REPO_DIR/lib/manifest"
 
 # Source-guard: tests source this file to reach the functions without running the
 # tool. Only execute when we are the process being run.

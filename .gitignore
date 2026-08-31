@@ -1,3 +1,5 @@
 dist/
 __pycache__/
 *.pyc
+.ci-gate.sh
+.released-sha

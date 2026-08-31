@@ -34,9 +34,23 @@ published file is one ~90 KB bash script with the 24 themes and both shell-hook
 templates appended after its final `exit` — bash never parses past that, so the payload
 costs nothing at shell start and `--install` reads the file's own tail to unpack it.
 
-**Requirements:** `bash` 4.0+ (3.2 works, but see below), plus `curl` or `wget` and one
-of `sha256sum`/`shasum`/`openssl` for the installer. No runtime dependencies beyond
-bash itself — no python, no package manager, nothing to keep updated.
+**Requirements:** `bash` 3.2 or newer, plus `curl` or `wget` and one of
+`sha256sum`/`shasum`/`openssl` for the installer. No runtime dependencies beyond bash
+itself — no python, no package manager, nothing to keep updated.
+
+The installer never writes into your `PATH` itself: it verifies the download against
+the release's `SHA256SUMS`, then hands the file to its own `--install`. So
+`--dry-run` is dry, and Ctrl-C aborts. Options, all passed through to `--install`
+except these:
+
+| | |
+|---|---|
+| `v2.0.1`, `--tag=v2.0.1` | one release rather than the latest (`COLOR_TERMINAL_VERSION`) |
+| `--prefix=DIR` | install root; the binary goes in `DIR/bin` (`COLOR_TERMINAL_PREFIX`, default `~/.local`) |
+| `--source=apps` | resolve from the LAN mirror instead of GitHub (`COLOR_TERMINAL_SOURCE`) |
+| `--download-only=PATH` | fetch and verify to `PATH`, install nothing |
+| `--print-url` | resolve and print the download URL, fetch nothing |
+| `--dry-run` | say what `--install` would do and write nothing |
 
 ## How it works
 
@@ -75,12 +89,17 @@ terminal in both tiers, so no probing or handshake is needed.
 what color it is now using. They have no per-terminal code, which is the evidence for
 the claim above.
 
-**Tier 3** — detected, declined, and told why. Emitting into these is worse than doing
-nothing because it *looks* like it worked: konsole parses OSC 4, stores it, answers
-queries about it, and never renders with it; Warp ignores it; mosh drops it; Apple
-Terminal has no palette OSC at all.
+**Tier 3** — detected, declined, and told why: `konsole`, Warp, mosh, Apple Terminal.
+Emitting into these is worse than doing nothing because it *looks* like it worked:
+konsole parses OSC 4, stores it, answers queries about it, and never renders with it;
+Warp ignores it; mosh drops it; Apple Terminal has no palette OSC at all. konsole,
+Warp and Apple Terminal are recognised by the variables they export; mosh has none, so
+it is recognised by `mosh-server` being an ancestor of the shell. Over ssh *from* a
+tier-3 terminal none of that is visible on the far side, so the session is treated as
+tier 2 and recoloured — harmlessly, since the terminal ignores it.
 
-Run `color-terminal --doctor` to see which one you are in and what it can do.
+Run `color-terminal --doctor` to see which one you are in, what it can do, and — for
+tier 3 — why it is declining.
 
 ## When colors change
 
@@ -162,6 +181,13 @@ bar leaves 2 usable light themes out of 44 that otherwise pass.
 |---|---|
 | `NO_COLOR=1` | the [no-color.org](https://no-color.org) convention, honoured before anything forks |
 | `COLOR_TERMINAL=0` | per-shell or per-session off switch |
+
+Both of those mean *do not recolour*. `--install`, `--uninstall` and `--doctor` work
+regardless, so exporting `NO_COLOR` globally never leaves you unable to take the tool
+out.
+
+| | |
+|---|---|
 | `~/.config/color-terminal/hosts/<hostname>` | pin one machine to one theme forever |
 | `trigger = manual` | never automatic |
 | `color-terminal --uninstall` | removes the hook, the include line, and the binary |
@@ -184,8 +210,10 @@ git checkout v2.0.0 && make dist && sha256sum dist/color-terminal
 curl -fsSL https://github.com/lariocpt/color-terminal/releases/download/v2.0.0/SHA256SUMS
 ```
 
-The two must agree. The payload tar is built with normalised mtimes, ownership and
-sort order precisely so that this comparison means something.
+The two must agree. The payload tar is built with normalised mtimes, ownership, file
+modes and sort order precisely so that this comparison means something — a fresh
+clone, a different umask or a stray executable bit on a theme file must not change a
+byte. It needs GNU tar (`brew install gnu-tar` on macOS; the Makefile finds `gtar`).
 
 ## Contributing
 
@@ -205,13 +233,16 @@ make golden            # regenerate the expected render output
 make themes            # rebuild the corpus from ghostty's, via tools/import-scheme.sh
 ```
 
-`lib/*.sh` is source-only and never installed. `make dist` concatenates it into one
-self-contained script and appends the themes and hook templates as a payload, which is
-how it stays `scp`-able to a bare host and how it avoids fifteen `open()` calls at
-every shell start.
+`lib/*.sh` is source-only and never installed. `make dist` concatenates the files
+listed in `lib/manifest` into one self-contained script and appends the themes and
+hook templates as a payload, which is how it stays `scp`-able to a bare host and how
+it avoids fifteen `open()` calls at every shell start. `bin/color-terminal` reads the
+same manifest, so the checkout and the artifact are always made of the same parts.
 
 Adding a terminal is one file in `lib/backends/` implementing six functions, plus one
-line in `CT_BACKENDS`; see the contract at the top of `lib/backend.sh`.
+line in `CT_BACKENDS` and one in `lib/manifest`; see the contract at the top of
+`lib/backend.sh`. A tier-3 terminal — one to recognise and refuse — is the same file
+with three functions: `_detect`, an empty `_caps`, and `_decline` returning the reason.
 
 Three test layers. `test/run.sh` needs no terminal emulator at all — `test/faketerm.py`
 allocates a pty, becomes the terminal, and asserts the exact bytes. `test/live/run.sh`
@@ -220,7 +251,9 @@ terminals in podman and currently verifies **foot, kitty, alacritty and xterm** 
 asking each one back what colour it is now using; kitty is cross-checked against
 `kitten @ get-colors` as an independent second oracle.
 
-Budget: a full swap costs ~10 ms and a nested-shell no-op ~4 ms, both asserted in CI.
+Measured here, a full swap costs ~10 ms and a nested-shell no-op ~4 ms. CI asserts
+budgets of 40 ms and 15 ms, loose enough for a shared runner and tight enough that a
+fork on the hot path still fails.
 
 ### bash 3.2
 

@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # SC2034: globals are written in one fragment and read in another.
-# SC1007: `VAR=` clears a global; the space-separated form is deliberate.
-# shellcheck disable=SC2034,SC1007
+# shellcheck disable=SC2034
 # theme.sh — load one theme file into the CT_* globals the emitter and the backends
 # read. Themes are DATA: parsed with the shared flat parser, never sourced. People
 # paste theme files from gists, and a sourced theme file is arbitrary code execution.
@@ -91,7 +90,9 @@ ct_theme_kv() {                               # <key> <value>
 }
 
 ct_theme_load() {                             # <theme-id>
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_PAL=() CT_NAME= CT_VARIANT= CT_FAMILY= CT_PAIR=
+    # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_BG= CT_FG= CT_CURSOR= CT_CURSOR_TEXT= CT_SEL_BG= CT_SEL_FG= CT_SPLASH=
     ct_theme_path "$1" || { ct_warn "no such theme: $1"; return 1; }
     ct_parse_kv "$CT_THEME_FILE" ct_theme_kv

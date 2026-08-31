@@ -23,7 +23,10 @@
 # All three run the same code. Keeping the installer inside the artifact instead of
 # beside it is what makes the last two possible.
 set -uo pipefail
-HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# ${BASH_SOURCE[0]:-} rather than ${BASH_SOURCE[0]}: piped from curl there is no
+# source file, and under `set -u` the bare form prints two unbound-variable errors
+# before the guard below gets to say what actually went wrong.
+HERE="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" 2>/dev/null && pwd)"
 
 # Piped from curl, $HERE is the caller's cwd and there is no Makefile in it. Without
 # this the failure is `make dist failed`, which tells you nothing about the fact that
