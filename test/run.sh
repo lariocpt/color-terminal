@@ -146,6 +146,33 @@ print(" ".join(oscs(tty)))
 PY
 }
 
+# The direct-launch wrapper runs the flow and then exec's a command, so the test
+# needs three things at once: the exit code, the app's own output (the tool's stderr
+# arrives in the same pipe, so refusal warnings show up in the stdout= line) and the
+# escape bytes. pty_exec reports all three; wparse splits them back apart.
+pty_exec() {                                 # <env-assignments...> -- <tool args...> -- <cmd...>
+    python3 - "$@" <<'PY'
+import os, sys
+sys.path.insert(0, "test")
+from faketerm import run, oscs, assert_clean_stdout
+argv = sys.argv[1:]
+a = argv.index("--"); b = argv.index("--", a + 1)
+env = dict(os.environ)
+for k in ("GHOSTTY_RESOURCES_DIR","TERM_PROGRAM","KONSOLE_VERSION","TMUX","STY","ZELLIJ","SSH_CONNECTION","SSH_TTY","SSH_CLIENT","NO_COLOR","COLOR_TERMINAL"):
+    env.pop(k, None)
+for x in argv[:a]:
+    k, v = x.split("=", 1); env[k] = v
+tty, out, st = run(["./bin/color-terminal", *argv[a+1:b], "--", *argv[b+1:]], env=env)
+assert_clean_stdout(out)
+print(f"status={st >> 8}")
+print(f"stdout={out.decode(errors='replace')!r}")
+print(f"oscs={' '.join(oscs(tty))}")
+PY
+}
+wparse() { IFS= read -r W_STATUS; IFS= read -r W_STDOUT; IFS= read -r W_OSCS
+    W_STATUS=${W_STATUS#status=}; W_STDOUT=${W_STDOUT#stdout=}; W_OSCS=${W_OSCS#oscs=}
+}
+
 newhome
 out=$(HOME=$H XDG_RUNTIME_DIR=$H/run pty_oscs TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
 is "ghostty: 16 palette + fg/bg/cursor" "$(printf '%s\n' "$out" | wc -w)" "19"
@@ -187,6 +214,80 @@ has   "tmux: plain OSC reaches the pane" "$raw" '\x1b]4;0;#3b4252'
 raw=$(raw_capture TERM=screen.xterm-256color STY=1.pts-0.h HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
 has "screen: DCS wrapper present"                          "$raw" '\x1bP\x1b]4;0;#3b4252'
 has "screen: inner terminator is BEL, not ESC-backslash"   "$raw" '#3b4252\x07\x1b\\'
+
+section "L2 pty — wrapper (direct launch)"
+
+newhome
+
+# The wrapper's whole contract in one test: the exec'd app runs, and it emits EXACTLY
+# what a direct run would. Pinning --theme nord is what makes both sides deterministic.
+base=$(pty_oscs TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord)
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord -- /bin/echo CT-WRAP-OK)
+wparse <<< "$w"
+has   "wrapper: the exec'd app ran"                      "$W_STDOUT" "CT-WRAP-OK"
+is    "wrapper: same escape bytes as a direct swap"      "$W_OSCS" "$base"
+is    "wrapper: a clean flow leaves exit 0"              "$W_STATUS" "0"
+
+# The command is not ours: its args reach the app exactly as written, quotes intact.
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord -- /bin/echo a b 'c d')
+wparse <<< "$w"
+has "wrapper: app args pass through intact"             "$W_STDOUT" "a b c d"
+
+# The app's exit code IS the process's exit code — that is the only exit a launcher sees.
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord -- sh -c 'exit 7')
+wparse <<< "$w"
+is "wrapper: the app's exit code propagates"            "$W_STATUS" "7"
+
+base=$(pty_oscs TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --reset)
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --reset -- /bin/echo CT-RESET-OK)
+wparse <<< "$w"
+has   "wrapper: a reset hands the terminal back"        "$W_STDOUT" "CT-RESET-OK"
+is    "wrapper: a reset matches a direct reset"         "$W_OSCS" "$base"
+is    "wrapper: a reset leaves exit 0"                  "$W_STATUS" "0"
+
+SENT="$H/wrap-dry-sentinel"
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --dry-run --theme nord -- sh -c "touch $SENT")
+wparse <<< "$w"
+has   "wrapper: --dry-run says what it would exec"      "$W_STDOUT" "would exec: sh -c touch $SENT"
+is    "wrapper: --dry-run emits nothing"                "$W_OSCS" ""
+is    "wrapper: --dry-run still leaves exit 0"          "$W_STATUS" "0"
+[ ! -e "$SENT" ] && ok "wrapper: --dry-run never runs the app" || nope "wrapper: --dry-run never runs the app" "$SENT exists"
+
+# NO_COLOR is an opt-out, not a failure: every zero-return flow exec's the app, and
+# this must be an explicit assignment — NO_COLOR is in the fixed pop list.
+w=$(pty_exec NO_COLOR=1 TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord -- /bin/echo CT-NO-COLOR)
+wparse <<< "$w"
+has   "wrapper: an opt-out still starts the app"        "$W_STDOUT" "CT-NO-COLOR"
+is    "wrapper: an opt-out emits nothing"               "$W_OSCS" ""
+is    "wrapper: an opt-out leaves exit 0"               "$W_STATUS" "0"
+
+# Tier 3 declines for the same reason it declines under a hook: it is a zero-return
+# flow, so the app still starts.
+w=$(pty_exec TERM=xterm-256color KONSOLE_VERSION=240800 HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme nord -- /bin/echo CT-KON-OK)
+wparse <<< "$w"
+has   "wrapper: a tier-3 decline still starts the app"  "$W_STDOUT" "CT-KON-OK"
+is    "wrapper: a tier-3 decline emits nothing"         "$W_OSCS" ""
+is    "wrapper: a tier-3 decline leaves exit 0"         "$W_STATUS" "0"
+
+# A refused flow must not exec: starting the app on uncoloured defaults would hide
+# the failure, so the refusal's exit code is the launcher's exit code.
+SENT2="$H/wrap-refuse-sentinel"
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --theme definitely-not-a-theme -- sh -c "touch $SENT2")
+wparse <<< "$w"
+is    "wrapper: a refused flow leaves its exit code"    "$W_STATUS" "1"
+[ ! -e "$SENT2" ] && ok "wrapper: a refused flow never runs the app" || nope "wrapper: a refused flow never runs the app" "$SENT2 exists"
+
+# Administration is not a recolor: there is no exec path behind --list, and the
+# refusal says so where stderr lands.
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --list -- /bin/echo CT-LIST-NOPE)
+wparse <<< "$w"
+is    "wrapper: --list with -- is refused"              "$W_STATUS" "2"
+has   "wrapper: …and says it runs the recolor flow"     "$W_STDOUT" "runs the recolor flow, not 'list'"
+
+w=$(pty_exec TERM=xterm-ghostty HOME="$H" XDG_RUNTIME_DIR="$H/run" -- --)
+wparse <<< "$w"
+is    "wrapper: a bare -- is refused"                   "$W_STATUS" "2"
+has   "wrapper: …and says no command follows"           "$W_STDOUT" "no command after --"
 
 section "L3 matrix — terminals that are not installed here"
 

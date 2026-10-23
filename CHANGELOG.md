@@ -11,6 +11,17 @@ section here. `CT_VERSION` in `lib/common.sh` must match the tag being released.
 
 ## [Unreleased]
 
+### Added
+
+- **`-- CMD` wrapper mode.** `ghostty -e yazi` never recoloured: the flow lives in
+  the shell hook, and a direct launch has no shell to hook. `color-terminal -- CMD`
+  runs the same flow a hooked pane runs — trigger policy included, because `--` sets
+  `CT_FROM_HOOK`, so a pane that already recoloured does not do it twice — and then
+  `exec`s, so the pane's main process becomes the app. A refused flow (missing theme,
+  an administration argument) exits non-zero without starting the app; `--dry-run`
+  prints the exec it will not do; opt-outs, tier-3 declines and trigger declines
+  still exec it.
+
 ## [2.0.1] - 2026-08-31
 
 A review release: everything below came out of a full pass over 2.0.0 the day after
