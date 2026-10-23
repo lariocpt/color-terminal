@@ -25,6 +25,10 @@ Usage:
   color-terminal --unwire        remove it again, and our palette fragment
   color-terminal --dry-run       say what would happen; emit nothing, write nothing
   color-terminal --version
+  color-terminal -- CMD [ARGS]   run the recolor flow, then exec CMD in its place.
+                                 That is how `ghostty -e color-terminal -- yazi`
+                                 cycles the same way a shell pane does: the pane's
+                                 main process becomes the app.
 
 Install options:
   --trigger=pane|shell|manual    when colors change (default: pane)
@@ -71,6 +75,11 @@ ct_main() {
     CT_OPT_terminal= CT_OPT_theme= CT_DRY=0 CT_FROM_HOOK=0
     # shellcheck disable=SC1007  # `VAR=` clears each global; the spacing is deliberate
     CT_OPT_trigger= CT_NO_WIRE=0 CT_QUIET=${CT_QUIET:-0} CT_PREFIX=${CT_PREFIX:-$HOME/.local}
+    # Wrapper capture: `--` ends the options; what follows is a command to exec after
+    # the flow. A plain global array (no `local -a`: bash 3.2), and CT_HAS_CMD keeps
+    # "no `--`" distinct from "`--` with no command" so an empty array is never
+    # expanded under set -u.
+    CT_CMD=() CT_HAS_CMD=0
 
     while [ $# -gt 0 ]; do
         case "$1" in
@@ -89,6 +98,13 @@ ct_main() {
             --prefix=*)         CT_PREFIX=${1#--prefix=} ;;
             --quiet|-q)         CT_QUIET=1 ;;
             --hook)             CT_FROM_HOOK=1 ;;
+            --)                 # end of options: everything from here on is a command
+                                # to exec after the flow (the direct-launch wrapper)
+                shift
+                CT_CMD=("$@")
+                CT_HAS_CMD=1
+                CT_FROM_HOOK=1  # a pane is a pane: the trigger policy applies
+                break ;;
             --dry-run|-n)       CT_DRY=1 ;;
             --theme)            shift; CT_OPT_theme=${1:-} ;;
             --theme=*)          CT_OPT_theme=${1#--theme=} ;;
@@ -100,6 +116,34 @@ ct_main() {
         esac
         shift
     done
+
+    # Wrapper validation. Under a `-- CMD` the flow runs exactly as it does under a
+    # shell hook, so only the two actions that recolour make sense there; everything
+    # else is administration or diagnostics, and the app must not start behind it.
+    if [ "$CT_HAS_CMD" = 1 ]; then
+        [ ${#CT_CMD[@]} -gt 0 ] || { ct_warn "no command after --"; return 2; }
+        case "$action" in
+            swap|reset) : ;;
+            *) ct_warn "'-- CMD' runs the recolor flow, not '$action'"; return 2 ;;
+        esac
+    fi
+
+    local rc=0
+    ct_flow "$action"
+    rc=$?
+    [ "$CT_HAS_CMD" = 1 ] || return $rc
+    # A non-zero flow is a refusal (missing themes, an unreadable theme, ...): exec'ing
+    # the app anyway would start it on uncoloured defaults and hide the failure.
+    [ $rc -eq 0 ] || return $rc
+    [ "$CT_DRY" = 1 ] && { printf 'would exec: %s\n' "${CT_CMD[*]}"; return 0; }
+    exec "${CT_CMD[@]}"
+}
+
+# The recolor flow: everything ct_main used to do after the option loop, byte for
+# byte. Split out so wrapper mode can run it and then exec a command in the same
+# process; `action` is passed in, not inherited.
+ct_flow() {
+    local action=$1
 
     ct_paths_init
     ct_config_load
