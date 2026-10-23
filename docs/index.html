@@ -559,6 +559,26 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
       </p>
     </section>
 
+    <section id="apps">
+      <h2>Launching apps directly</h2>
+      <p>
+        The hook lives in the shell, so a direct launch —
+        <code>ghostty -e yazi</code>, or a desktop entry pointed straight at an
+        app — has no shell to recolour and opens uncoloured. The same artifact
+        wraps it:
+      </p>
+      <pre><code>ghostty -e color-terminal -- yazi</code></pre>
+      <p>
+        <code>color-terminal -- <em>CMD</em></code> runs the flow a hooked pane
+        would run — trigger policy included, so a pane that has already recoloured
+        does not do it twice — and then <code>exec</code>s the app into the
+        pane&rsquo;s main process: quit the app, and the window closes with it. A
+        refused flow and the app never starts; <code>--dry-run</code> prints the
+        exec it will not do. A declined swap — opt-out, tier 3, trigger — still
+        hands over to the app, just uncoloured.
+      </p>
+    </section>
+
     <!-- ==================================================================
          PHASE 2 INSERTION POINTS
          Each pair below is a slot. The generator replaces everything BETWEEN a

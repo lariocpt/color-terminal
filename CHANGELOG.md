@@ -11,6 +11,14 @@ section here. `CT_VERSION` in `lib/common.sh` must match the tag being released.
 
 ## [Unreleased]
 
+## [2.1.1] - 2026-10-23
+
+### Changed
+
+- Documentation only: the README and the website now cover `-- CMD` wrapper mode,
+  which 2.1.0 shipped undocumented. The shipped artifact is unchanged apart from
+  the version string.
+
 ## [2.1.0] - 2026-10-23
 
 ### Added
