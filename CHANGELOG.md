@@ -11,6 +11,8 @@ section here. `CT_VERSION` in `lib/common.sh` must match the tag being released.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-23
+
 ### Added
 
 - **`-- CMD` wrapper mode.** `ghostty -e yazi` never recoloured: the flow lives in
