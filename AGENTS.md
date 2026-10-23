@@ -118,7 +118,7 @@ would rewrite your own `~/.zshrc`.
 ## The website
 
 `docs/index.html` is the whole site, served by Pages with no build step. Its five hard
-rules are in `docs/README.md` and CI enforces two of them. Three sections are generated
+rules are in `WEBSITE.md` and CI enforces two of them. Three sections are generated
 from the theme corpus by `tools/gen-site.py` (`make docs`) — CI fails if regenerating
 changes the file, so a theme added without `make docs` is caught at review.
 
@@ -129,7 +129,7 @@ bashism. It never writes into `$PREFIX/bin` itself: it verifies, then hands the 
 file to the artifact's own `--install`, which is what makes `--dry-run` dry. Keep it
 that way.
 
-`tools/check-site.py` is rule 1 of `docs/README.md` (zero external requests) as code;
+`tools/check-site.py` is rule 1 of `WEBSITE.md` (zero external requests) as code;
 `make lint`, `ci.yml` and `pages.yml` all run it. The site deploys only after
 `pages.yml`'s own checks pass — `ci.yml` cannot gate it, so it does not claim to.
 

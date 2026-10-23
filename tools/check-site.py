@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Enforce rule 1 of docs/README.md: the website makes ZERO external requests.
+"""Enforce rule 1 of WEBSITE.md: the website makes ZERO external requests.
 
 The previous check was a grep for `<(link|script|img)…(src|href)="https?:` — which is
 blind to single quotes, unquoted values, protocol-relative `//` URLs, srcset, iframes,

@@ -123,6 +123,7 @@ has no shell to hook, so it opens uncoloured. Wrap it:
 
 ```
 ghostty -e color-terminal -- yazi
+ghostty -e color-terminal -- micro
 ```
 
 `color-terminal -- CMD` runs the same flow a hooked pane runs — trigger policy
