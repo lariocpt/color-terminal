@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Fill the generated sections of docs/index.html from the code, not from memory.
 
-docs/README.md reserves three slots in the page and defines the contract: replace
+WEBSITE.md reserves three slots in the page and defines the contract: replace
 everything BETWEEN a `<!-- ct:generated:NAME BEGIN -->` marker and its matching END,
 leave both markers in place, and emit one complete <section>.
 
@@ -9,7 +9,7 @@ Two of the three sections are derived from the repository so they cannot drift f
 what ships:
 
   gallery  — every swatch is painted with values read out of themes/*.theme by the
-             same parser the validator uses. docs/README.md forbids invented hex on
+             same parser the validator uses. WEBSITE.md forbids invented hex on
              the page, because a swatch that is not real theme data misrepresents
              what the tool does.
   support  — the tier-1 and tier-3 terminal lists come from CT_BACKENDS in

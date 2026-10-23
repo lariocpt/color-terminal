@@ -345,7 +345,7 @@ th {
 
 /* The theme gallery. Every swatch paints itself with its own theme's real colours,
    set inline by tools/gen-site.py straight out of themes/*.theme — so a card cannot
-   drift from what the tool would actually apply. No images: rule 1 in docs/README.md
+   drift from what the tool would actually apply. No images: rule 1 in WEBSITE.md
    is that this page makes zero external requests, and a screenshot would be one. */
 .gallery {
   display: grid;
@@ -567,7 +567,8 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
         app — has no shell to recolour and opens uncoloured. The same artifact
         wraps it:
       </p>
-      <pre><code>ghostty -e color-terminal -- yazi</code></pre>
+      <pre><code>ghostty -e color-terminal -- yazi
+ghostty -e color-terminal -- micro</code></pre>
       <p>
         <code>color-terminal -- <em>CMD</em></code> runs the flow a hooked pane
         would run — trigger policy included, so a pane that has already recoloured
@@ -584,7 +585,7 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
          Each pair below is a slot. The generator replaces everything BETWEEN a
          BEGIN and its END with a complete <section>, and leaves the two marker
          lines themselves untouched so the slot can be regenerated. Empty slots
-         render as nothing. See docs/README.md.
+         render as nothing. See WEBSITE.md.
          ================================================================== -->
 
     <!-- ct:generated:triggers BEGIN -->
@@ -800,7 +801,7 @@ printf '\033]11;#1e1e2e\033\\'  &gt; /dev/tty   <span class="cmt"># set the back
   "use strict";
 
   /* The six palettes below are copied verbatim out of the project's own theme
-     files at build time — see docs/README.md. Do not hand-edit them. */
+     files at build time — see WEBSITE.md. Do not hand-edit them. */
   var PALETTES = [
     { id: "catppuccin-mocha", name: "Catppuccin Mocha", variant: "dark",
       bg: "#1e1e2e", fg: "#cdd6f4",

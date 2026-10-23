@@ -1,8 +1,12 @@
-# docs/ — the color-terminal website
+# WEBSITE.md — the color-terminal website
 
-GitHub Pages serves this directory from `main`. There is no build step, no framework,
-and no package manifest: the files that are committed are byte-for-byte the files that
-are served.
+This file documents the site but deliberately lives at the repo root, **not** in
+`docs/`: everything under `docs/` is published byte-for-byte, and maintainer notes
+served at a public URL read like leaked planning docs. `docs/` contains the site and
+nothing else.
+
+GitHub Pages serves `docs/` from `main`, no build step, no framework, and no package
+manifest: the files that are committed are byte-for-byte the files that are served.
 
 | file | role |
 |---|---|
