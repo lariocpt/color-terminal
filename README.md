@@ -116,6 +116,29 @@ session: every nested shell in one pane shares a session id, and a new pane gets
 one. Without that, `su`, `:!sh` from vim, `poetry shell` and every coding-agent
 subshell re-randomize the window while you are typing in it.
 
+### Launching apps directly
+
+A direct launch — `ghostty -e yazi`, or a `.desktop` entry pointed straight at an app —
+has no shell to hook, so it opens uncoloured. Wrap it:
+
+```
+ghostty -e color-terminal -- yazi
+```
+
+`color-terminal -- CMD` runs the same flow a hooked pane runs — trigger policy
+included, so a pane that already recoloured does not do it twice — and then `exec`s
+the app into the pane's main process. Quit the app and the window closes, because
+`ghostty -e` forces `quit-after-last-window-closed`. A refused flow means the app
+never starts; `--dry-run` prints the exec it would have done. Opt-outs, tier-3
+declines and trigger declines still start the app, just uncoloured.
+
+From a compositor or desktop-entry launch the PATH has no `~/.local/bin` (rc files
+add it only for interactive shells), so use absolute paths for both halves:
+
+```
+ghostty -e /home/you/.local/bin/color-terminal -- /usr/bin/yazi
+```
+
 ## Persistence
 
 color-terminal never edits a line it did not write. It adds **one** include line to
